@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Personal Finance Tracker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;600;700&family=DM+Sans:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Finance made friendlier</p>
+          <h1>My Personal Finance Tracker</h1>
+          <p class="hero-text">
+            Upload your RBC credit card and debit PDFs, keep them saved on this
+            device, and turn them into neat sections with easy-to-read monthly
+            trends.
+          </p>
+          <div class="hero-pills">
+            <span>Credit + Debit PDFs</span>
+            <span>Saved Locally</span>
+            <span>Smart Sections</span>
+            <span>Graph-heavy Dashboard</span>
+          </div>
+        </div>
+        <div class="hero-card">
+          <div class="card-glow"></div>
+          <p class="hero-card-label">This dashboard highlights</p>
+          <ul>
+            <li>Saved monthly statements on this browser</li>
+            <li>Credit cards, debit accounts, and combined totals</li>
+            <li>Transaction categories and trends</li>
+          </ul>
+        </div>
+      </header>
+
+      <main class="dashboard">
+        <section class="upload-panel glass-card">
+          <div>
+            <p class="section-tag">Step 1</p>
+            <h2>Drop in your statements</h2>
+            <p class="muted">
+              Upload one or more RBC credit card or debit statement PDFs.
+              Parsing and storage happen in your browser.
+            </p>
+          </div>
+
+          <label class="dropzone" id="dropzone" for="fileInput">
+            <input id="fileInput" type="file" accept="application/pdf" multiple />
+            <span class="dropzone-icon">+</span>
+            <span class="dropzone-title">Choose PDFs or drag them here</span>
+            <span class="dropzone-subtitle">
+              Best with text-based RBC statements
+            </span>
+          </label>
+
+          <div class="controls">
+            <button id="demoButton" class="secondary-button" type="button">
+              Load demo data
+            </button>
+            <button id="clearButton" class="ghost-button" type="button">
+              Clear saved data
+            </button>
+          </div>
+
+          <div id="status" class="status-panel">
+            Waiting for statements.
+          </div>
+        </section>
+
+        <section class="overview-grid">
+          <article class="metric-card glass-card">
+            <p>Total statements</p>
+            <h3 id="statementCount">0</h3>
+          </article>
+          <article class="metric-card glass-card">
+            <p>Total money in</p>
+            <h3 id="incomeTotal">$0.00</h3>
+          </article>
+          <article class="metric-card glass-card">
+            <p>Total money out</p>
+            <h3 id="spendingTotal">$0.00</h3>
+          </article>
+          <article class="metric-card glass-card">
+            <p>Net change</p>
+            <h3 id="netTotal">$0.00</h3>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <article class="glass-card section-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-tag">Sections</p>
+                <h2>Statement breakdown</h2>
+              </div>
+            </div>
+            <div id="statementSections" class="stack-list empty-state">
+              Upload credit card or debit statements to see saved summaries,
+              balances, and parsed sections.
+            </div>
+          </article>
+
+          <article class="glass-card chart-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-tag">Visual 1</p>
+                <h2>Money flow</h2>
+              </div>
+            </div>
+            <div id="flowChart" class="chart-area empty-state">
+              Charts will appear after parsing.
+            </div>
+          </article>
+
+          <article class="glass-card chart-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-tag">Visual 2</p>
+                <h2>Category breakdown</h2>
+              </div>
+            </div>
+            <div id="categoryChart" class="chart-area empty-state">
+              Upload statements to classify your spending.
+            </div>
+          </article>
+
+          <article class="glass-card chart-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-tag">Visual 3</p>
+                <h2>Balance trend</h2>
+              </div>
+            </div>
+            <div id="balanceChart" class="chart-area empty-state">
+              Closing balances will be graphed here.
+            </div>
+          </article>
+
+          <article class="glass-card chart-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-tag">Visual 4</p>
+                <h2>Spending timeline</h2>
+              </div>
+            </div>
+            <div id="timelineChart" class="chart-area empty-state">
+              Daily or statement-level spending trends will show here.
+            </div>
+          </article>
+
+          <article class="glass-card section-card full-width">
+            <div class="card-heading">
+              <div>
+                <p class="section-tag">Details</p>
+                <h2>Parsed transactions</h2>
+                <p class="muted details-note">
+                  Overview totals below are based only on parsed transactions.
+                </p>
+              </div>
+              <div id="bulkCategoryTools" class="bulk-tools hidden">
+                <span id="selectionCount" class="selection-count">0 selected</span>
+                <span class="selection-hint">Click any transaction row to select it</span>
+                <button id="selectAllButton" class="ghost-button compact-button" type="button">
+                  Select visible
+                </button>
+                <button id="clearSelectionButton" class="ghost-button compact-button" type="button">
+                  Clear
+                </button>
+                <select id="bulkCategorySelect" class="category-select" aria-label="Choose category">
+                  <option value="">Choose category</option>
+                </select>
+                <button id="applyCategoryButton" class="secondary-button compact-button" type="button">
+                  Apply category
+                </button>
+              </div>
+            </div>
+            <div id="transactionFilters" class="filter-tools hidden">
+              <input id="searchFilter" class="filter-input" type="search" placeholder="Search description" />
+              <select id="categoryFilter" class="category-select" aria-label="Filter by category">
+                <option value="">All categories</option>
+              </select>
+              <select id="flowFilter" class="category-select" aria-label="Filter by money flow">
+                <option value="">All amounts</option>
+                <option value="credit">Money in</option>
+                <option value="charge">Money out</option>
+              </select>
+            </div>
+            <div id="transactionTabs" class="transaction-tabs hidden"></div>
+            <div id="transactionTable" class="table-wrap empty-state">
+              Parsed transactions will be listed here.
+            </div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
