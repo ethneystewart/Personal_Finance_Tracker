@@ -6,8 +6,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 const state = {
   statements: [],
   transactions: [],
+  draftStatements: [],
+  draftTransactions: [],
+  draftFiles: [],
   selectedTransactionIds: [],
   activeStatementKey: "all",
+  activeView: "all-data",
+  pendingStatementKind: null,
   filters: {
     search: "",
     category: "",
@@ -23,12 +28,32 @@ const els = {
   status: document.querySelector("#status"),
   demoButton: document.querySelector("#demoButton"),
   clearButton: document.querySelector("#clearButton"),
+  allDataNavButton: document.querySelector("#allDataNavButton"),
+  newEntryButton: document.querySelector("#newEntryButton"),
+  budgetNavButton: document.querySelector("#budgetNavButton"),
+  allDataPage: document.querySelector("#allDataPage"),
+  newEntryPage: document.querySelector("#newEntryPage"),
+  budgetPage: document.querySelector("#budgetPage"),
+  entryPanel: document.querySelector("#entryPanel"),
+  statementTypeStep: document.querySelector("#statementTypeStep"),
+  statementTypeCreditButton: document.querySelector("#statementTypeCreditButton"),
+  statementTypeDebitButton: document.querySelector("#statementTypeDebitButton"),
+  statementTypeChip: document.querySelector("#statementTypeChip"),
+  statementTypeChipLabel: document.querySelector("#statementTypeChipLabel"),
+  changeStatementTypeButton: document.querySelector("#changeStatementTypeButton"),
+  draftReviewSection: document.querySelector("#draftReviewSection"),
+  draftStatementFields: document.querySelector("#draftStatementFields"),
+  entryActions: document.querySelector("#entryActions"),
+  entrySummary: document.querySelector("#entrySummary"),
+  submitEntryButton: document.querySelector("#submitEntryButton"),
+  discardEntryButton: document.querySelector("#discardEntryButton"),
   bulkCategoryTools: document.querySelector("#bulkCategoryTools"),
   selectionCount: document.querySelector("#selectionCount"),
   selectAllButton: document.querySelector("#selectAllButton"),
   clearSelectionButton: document.querySelector("#clearSelectionButton"),
   bulkCategorySelect: document.querySelector("#bulkCategorySelect"),
   applyCategoryButton: document.querySelector("#applyCategoryButton"),
+  deleteSelectedButton: document.querySelector("#deleteSelectedButton"),
   transactionFilters: document.querySelector("#transactionFilters"),
   transactionTabs: document.querySelector("#transactionTabs"),
   searchFilter: document.querySelector("#searchFilter"),
@@ -42,6 +67,7 @@ const els = {
   flowChart: document.querySelector("#flowChart"),
   categoryChart: document.querySelector("#categoryChart"),
   balanceChart: document.querySelector("#balanceChart"),
+  creditCardSpendChart: document.querySelector("#creditCardSpendChart"),
   timelineChart: document.querySelector("#timelineChart"),
   transactionTable: document.querySelector("#transactionTable"),
 };
@@ -121,9 +147,19 @@ function init() {
 
   els.demoButton.addEventListener("click", loadDemoData);
   els.clearButton.addEventListener("click", clearDashboard);
+  els.statementTypeCreditButton.addEventListener("click", () => chooseStatementKind("credit-card"));
+  els.statementTypeDebitButton.addEventListener("click", () => chooseStatementKind("bank-account"));
+  els.changeStatementTypeButton.addEventListener("click", changeStatementKind);
+  els.draftStatementFields.addEventListener("input", handleDraftStatementFieldInput);
+  els.allDataNavButton.addEventListener("click", () => switchView("all-data"));
+  els.newEntryButton.addEventListener("click", focusEntryPanel);
+  els.budgetNavButton.addEventListener("click", () => switchView("budget"));
+  els.submitEntryButton.addEventListener("click", submitDraftEntry);
+  els.discardEntryButton.addEventListener("click", discardDraftEntry);
   els.selectAllButton.addEventListener("click", selectVisibleTransactions);
   els.clearSelectionButton.addEventListener("click", clearTransactionSelection);
   els.applyCategoryButton.addEventListener("click", applyBulkCategory);
+  els.deleteSelectedButton.addEventListener("click", deleteSelectedTransactions);
   els.transactionTable.addEventListener("click", handleTransactionTableClick);
   els.transactionTabs.addEventListener("click", handleTransactionTabClick);
   els.searchFilter.addEventListener("input", handleFilterInput);
@@ -138,6 +174,11 @@ async function handleFiles(files) {
     return;
   }
 
+  if (!state.pendingStatementKind) {
+    setStatus("Choose whether this is a credit card or debit statement first.");
+    return;
+  }
+
   setStatus(`Reading ${files.length} PDF statement${files.length === 1 ? "" : "s"}...`);
 
   const parsedStatements = [];
@@ -147,7 +188,9 @@ async function handleFiles(files) {
     try {
       setStatus(`Extracting text from ${file.name} (${index + 1}/${files.length})...`);
       const text = await extractTextFromPdf(file);
-      const statement = parseRbcStatement(text, file.name);
+      const statement = parseRbcStatement(text, file.name, state.pendingStatementKind);
+      statement.cardLabel = guessCardLabel(file.name, statement);
+      statement.monthLabel = guessMonthLabel(statement.statementPeriod);
       statement.source = {
         originalFileName: file.name,
         fileSize: file.size,
@@ -167,15 +210,16 @@ async function handleFiles(files) {
     return;
   }
 
-  const merged = [...state.statements, ...parsedStatements];
-  const byFile = new Map(
-    merged.map((statement) => [buildStatementKey(statement), statement])
+  state.draftStatements = parsedStatements.sort(sortByPeriod);
+  state.draftTransactions = state.draftStatements.flatMap((statement) => statement.transactions || []);
+  state.draftFiles = archiveResults;
+  state.selectedTransactionIds = [];
+  state.activeStatementKey = "all";
+  resetFilters();
+  setStatus(
+    `Draft entry ready. Review ${state.draftTransactions.length} parsed transaction${state.draftTransactions.length === 1 ? "" : "s"}, adjust categories, then submit it to your totals.`
   );
-  state.statements = Array.from(byFile.values()).sort(sortByPeriod);
-  state.transactions = state.statements.flatMap((statement) => statement.transactions);
-  persistStatements();
-  const archiveSummary = await archiveUploadedFiles(archiveResults);
-  setStatus(archiveSummary);
+  focusEntryPanel();
   render();
 }
 
@@ -183,23 +227,26 @@ async function extractTextFromPdf(file) {
   const data = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data }).promise;
   const pageTexts = [];
+  let withdrawalDepositColumns = null;
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const textContent = await page.getTextContent();
     const rows = [];
+    const items = textContent.items.filter((item) => "str" in item && item.str.trim());
 
-    textContent.items.forEach((item) => {
-      if (!("str" in item)) {
-        return;
-      }
+    const pageColumns = detectWithdrawalDepositColumns(items);
+    if (pageColumns) {
+      withdrawalDepositColumns = pageColumns;
+    }
 
+    items.forEach((item) => {
       const y = Math.round(item.transform[5]);
       const x = item.transform[4];
-      const textValue = item.str.trim();
+      let textValue = item.str.trim();
 
-      if (!textValue) {
-        return;
+      if (withdrawalDepositColumns && isPlainMoneyAmount(textValue) && x < withdrawalDepositColumns.withdrawalEnd) {
+        textValue = `-${textValue}`;
       }
 
       let row = rows.find((entry) => Math.abs(entry.y - y) <= 2);
@@ -230,7 +277,29 @@ async function extractTextFromPdf(file) {
   return pageTexts.join("\n");
 }
 
-function parseRbcStatement(text, fileName) {
+function detectWithdrawalDepositColumns(items) {
+  const withdrawalsHeader = items.find((item) => /^withdrawals/i.test(item.str.trim()));
+  const depositsHeader = items.find((item) => /^deposits/i.test(item.str.trim()));
+
+  if (!withdrawalsHeader || !depositsHeader) {
+    return null;
+  }
+
+  const withdrawalsEndX = withdrawalsHeader.transform[4] + (withdrawalsHeader.width || 0);
+  const depositsStartX = depositsHeader.transform[4];
+
+  if (depositsStartX <= withdrawalsEndX) {
+    return null;
+  }
+
+  return { withdrawalEnd: (withdrawalsEndX + depositsStartX) / 2 };
+}
+
+function isPlainMoneyAmount(text) {
+  return /^\(?\$?\d[\d,]*\.\d{2}\)?$/.test(text);
+}
+
+function parseRbcStatement(text, fileName, forcedStatementKind) {
   const normalizedText = normalizeStatementText(text);
   const rawLines = normalizedText
     .split(/\n+/)
@@ -256,7 +325,7 @@ function parseRbcStatement(text, fileName) {
   const statementPeriod =
     extractStatementPeriod(normalizedText) || "Period not found";
 
-  const statementKind = detectStatementKind(normalizedText, accountType);
+  const statementKind = forcedStatementKind || detectStatementKind(normalizedText, accountType);
   const openingBalance = extractMoneyAfterLabel(normalizedText, [
     "opening balance",
     "balance forward",
@@ -339,43 +408,351 @@ function parseRbcStatement(text, fileName) {
 }
 
 function parseTransactions(lines, fileName, statementPeriod, statementKind) {
+  if (statementKind === "credit-card") {
+    return parseCreditCardTransactions(lines, fileName, statementPeriod, statementKind);
+  }
+
+  return parseDebitTransactions(lines, fileName, statementPeriod, statementKind);
+}
+
+function parseDebitTransactions(lines, fileName, statementPeriod, statementKind) {
   const transactions = [];
+  let current = null;
+  let lastDateLabel = "";
+  let pendingDescriptionPrefix = "";
+
+  const pushCurrent = () => {
+    if (current) {
+      const transaction = finalizeDebitTransaction(current, fileName, statementPeriod, statementKind);
+      if (transaction) {
+        transactions.push(transaction);
+      }
+    }
+    current = null;
+  };
 
   lines.forEach((line) => {
     const cleaned = cleanTransactionLine(line);
-    const parsed = parseTransactionLine(cleaned, statementPeriod);
-    if (!parsed) {
+    if (!cleaned || shouldIgnoreLine(cleaned)) {
       return;
     }
 
-    const { dateLabel, description, amount, balanceAfter } = parsed;
-
-    if (!description || Number.isNaN(amount)) {
+    const dated = parseTransactionLineStart(cleaned, statementPeriod);
+    if (dated) {
+      pushCurrent();
+      pendingDescriptionPrefix = "";
+      lastDateLabel = dated.dateLabel;
+      current = dated;
+      if (current.amount !== null) {
+        pushCurrent();
+      }
       return;
     }
 
-    const category = categorizeTransaction(description, amount, statementKind);
-    const flowType = inferFlowType(description, amount, statementKind, category);
-    transactions.push({
-      id: crypto.randomUUID(),
-      fileName,
-      statementPeriod,
-      dateLabel,
-      isoDate: toApproxIsoDate(dateLabel, statementPeriod),
-      description,
-      category,
-      flowType,
-      amount,
-      balanceAfter,
-    });
+    if (current) {
+      const trailing = extractTrailingAmounts(cleaned);
+      if (
+        trailing &&
+        !looksLikeStatementBoilerplate(cleaned) &&
+        !isNonTransactionDescription(cleaned)
+      ) {
+        if (trailing.prefix) {
+          current.description = `${current.description} ${trailing.prefix}`.trim();
+        }
+        current.amount = trailing.amount;
+        current.balanceAfter = trailing.balanceAfter;
+        pushCurrent();
+        return;
+      }
+
+      if (!looksLikeStatementBoilerplate(cleaned) && !isNonTransactionDescription(cleaned)) {
+        current.description = `${current.description} ${cleaned}`.trim();
+      }
+      return;
+    }
+
+    if (!lastDateLabel) {
+      return;
+    }
+
+    const undated = parseUndatedTransactionStart(cleaned);
+    if (undated) {
+      const description = pendingDescriptionPrefix
+        ? `${pendingDescriptionPrefix} ${undated.description}`.trim()
+        : undated.description;
+      pendingDescriptionPrefix = "";
+      current = {
+        dateLabel: lastDateLabel,
+        description,
+        amount: undated.amount,
+        balanceAfter: undated.balanceAfter,
+      };
+      pushCurrent();
+      return;
+    }
+
+    if (!looksLikeStatementBoilerplate(cleaned) && !isNonTransactionDescription(cleaned)) {
+      pendingDescriptionPrefix = pendingDescriptionPrefix
+        ? `${pendingDescriptionPrefix} ${cleaned}`.trim()
+        : cleaned;
+    }
   });
 
+  pushCurrent();
   return transactions;
+}
+
+function finalizeDebitTransaction(current, fileName, statementPeriod, statementKind) {
+  const description = normalizeDescription(current.description);
+
+  if (!description || current.amount === null || Number.isNaN(current.amount)) {
+    return null;
+  }
+
+  const category = categorizeTransaction(description, current.amount, statementKind);
+  const flowType = inferFlowType(description, current.amount, statementKind, category);
+
+  return {
+    id: crypto.randomUUID(),
+    fileName,
+    statementPeriod,
+    dateLabel: current.dateLabel,
+    isoDate: toApproxIsoDate(current.dateLabel, statementPeriod),
+    description,
+    category,
+    flowType,
+    amount: current.amount,
+    balanceAfter: current.balanceAfter ?? null,
+  };
+}
+
+function extractTrailingAmounts(line) {
+  const match = line.match(
+    /^(?<prefix>.*?)\s*(?<amount>\(?-?\$?\d[\d,]*\.\d{2}\)?)(?:\s+(?<balance>\(?-?\$?\d[\d,]*\.\d{2}\)?))?\b.*$/
+  );
+  if (!match?.groups) {
+    return null;
+  }
+
+  const amount = parseMoney(match.groups.amount);
+  if (Number.isNaN(amount)) {
+    return null;
+  }
+
+  return {
+    prefix: match.groups.prefix.trim(),
+    amount,
+    balanceAfter: match.groups.balance ? parseMoney(match.groups.balance) : null,
+  };
+}
+
+function parseUndatedTransactionStart(line) {
+  const money = "\\(?-?\\$?\\d[\\d,]*\\.\\d{2}\\)?";
+  const patterns = [
+    new RegExp(`^(?<description>.+?)\\s+(?<amount>${money})(?:\\s+(?<balance>${money}))?\\b.*$`, "i"),
+  ];
+
+  for (const pattern of patterns) {
+    const match = line.match(pattern);
+    if (!match?.groups) {
+      continue;
+    }
+
+    const description = normalizeDescription(match.groups.description);
+    if (!description || isNonTransactionDescription(description) || looksLikeStatementBoilerplate(description)) {
+      return null;
+    }
+
+    return {
+      description,
+      amount: parseMoney(match.groups.amount),
+      balanceAfter: match.groups.balance ? parseMoney(match.groups.balance) : null,
+    };
+  }
+
+  return null;
+}
+
+function parseCreditCardTransactions(lines, fileName, statementPeriod, statementKind) {
+  const transactions = [];
+  let current = null;
+
+  lines.forEach((line) => {
+    const cleaned = cleanTransactionLine(line);
+    const parsed = parseCreditCardTransactionStart(cleaned, statementPeriod);
+
+    if (parsed) {
+      if (current) {
+        transactions.push(finalizeCreditCardTransaction(current, fileName, statementPeriod, statementKind));
+      }
+      current = parsed;
+      return;
+    }
+
+    if (!current || shouldIgnoreCreditCardContinuation(cleaned)) {
+      return;
+    }
+
+    if (current.amount === null) {
+      const continuationAmount = extractContinuationAmount(cleaned);
+      if (!Number.isNaN(continuationAmount)) {
+        current.amount = continuationAmount;
+        return;
+      }
+    }
+
+    if (isCreditCardSupplementalDetail(cleaned)) {
+      current.details.push(cleaned);
+      return;
+    }
+
+    if (current.amount === null && !/^\d{6,}$/.test(cleaned)) {
+      current.description = `${current.description} ${cleaned}`.trim();
+    }
+  });
+
+  if (current) {
+    transactions.push(finalizeCreditCardTransaction(current, fileName, statementPeriod, statementKind));
+  }
+
+  return transactions.filter(Boolean);
+}
+
+function parseCreditCardTransactionStart(line, statementPeriod) {
+  const monthDay = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\s+\\d{1,2}";
+  const numeric = "\\d{1,2}\\/\\d{1,2}";
+  const money = "\\(?-?\\$?\\d[\\d,]*\\.\\d{2}\\)?";
+  const patterns = [
+    // Find the FIRST money-shaped token after the description and stop there —
+    // anything trailing (e.g. sidebar text sharing the same extracted row) is discarded.
+    new RegExp(`^(?<transactionDate>${monthDay})(?<postingDate>${monthDay})\\s+(?<description>.+?)\\s+(?<amount>${money})\\b.*$`, "i"),
+    new RegExp(`^(?<transactionDate>${monthDay})\\s+(?<postingDate>${monthDay})\\s+(?<description>.+?)\\s+(?<amount>${money})\\b.*$`, "i"),
+    new RegExp(`^(?<transactionDate>${numeric})(?<postingDate>${numeric})\\s+(?<description>.+?)\\s+(?<amount>${money})\\b.*$`, "i"),
+    new RegExp(`^(?<transactionDate>${numeric})\\s+(?<postingDate>${numeric})\\s+(?<description>.+?)\\s+(?<amount>${money})\\b.*$`, "i"),
+    // No money token anywhere on this line — leave amount unresolved for a later continuation line.
+    new RegExp(`^(?<transactionDate>${monthDay})(?<postingDate>${monthDay})\\s+(?<description>.+)$`, "i"),
+    new RegExp(`^(?<transactionDate>${monthDay})\\s+(?<postingDate>${monthDay})\\s+(?<description>.+)$`, "i"),
+    new RegExp(`^(?<transactionDate>${numeric})(?<postingDate>${numeric})\\s+(?<description>.+)$`, "i"),
+    new RegExp(`^(?<transactionDate>${numeric})\\s+(?<postingDate>${numeric})\\s+(?<description>.+)$`, "i"),
+  ];
+
+  for (const pattern of patterns) {
+    const match = line.match(pattern);
+    if (!match?.groups) {
+      continue;
+    }
+
+    const description = normalizeDescription(match.groups.description);
+    if (isNonTransactionDescription(description) || looksLikeStatementBoilerplate(description)) {
+      return null;
+    }
+
+    return {
+      transactionDateLabel: normalizeDateLabel(match.groups.transactionDate, statementPeriod),
+      postingDateLabel: normalizeDateLabel(match.groups.postingDate, statementPeriod),
+      description,
+      amount: match.groups.amount ? parseMoney(match.groups.amount) : null,
+      details: [],
+    };
+  }
+
+  return null;
+}
+
+function shouldIgnoreCreditCardContinuation(line) {
+  return (
+    !line ||
+    shouldIgnoreLine(line) ||
+    isCreditCardStructuralLine(line) ||
+    /^\d{10,}$/.test(line) ||
+    /^ethney stewart$/i.test(line) ||
+    /^\d{4}\s+\d{2}\*\*\s+\*{2,}\s+\d{4}/i.test(line) ||
+    /^\-?\s*primary/i.test(line) ||
+    /^(transaction date|posting date|activity description|amount)/i.test(line)
+  );
+}
+
+function finalizeCreditCardTransaction(current, fileName, statementPeriod, statementKind) {
+  const description = normalizeDescription(current.description);
+
+  if (!description || current.amount === null || Number.isNaN(current.amount)) {
+    return null;
+  }
+
+  const category = categorizeTransaction(description, current.amount, statementKind);
+  const flowType = inferFlowType(description, current.amount, statementKind, category);
+
+  return {
+    id: crypto.randomUUID(),
+    fileName,
+    statementPeriod,
+    dateLabel: current.transactionDateLabel,
+    postingDateLabel: current.postingDateLabel,
+    isoDate: toApproxIsoDate(current.transactionDateLabel, statementPeriod),
+    postingIsoDate: toApproxIsoDate(current.postingDateLabel, statementPeriod),
+    description,
+    details: current.details,
+    category,
+    flowType,
+    amount: current.amount,
+    balanceAfter: null,
+  };
+}
+
+function isCreditCardSupplementalDetail(line) {
+  return (
+    /^foreign currency/i.test(line) ||
+    /^exchange rate/i.test(line) ||
+    /foreign currency.*exchange rate/i.test(line) ||
+    /^merchant amount/i.test(line) ||
+    /^reference number/i.test(line)
+  );
+}
+
+function extractContinuationAmount(line) {
+  const match = line.match(/^(?<prefix>.*?)\s*(?<amount>\(?-?\$?\d[\d,]*\.\d{2}\)?)\b.*$/);
+  if (!match?.groups) {
+    return Number.NaN;
+  }
+
+  const prefix = match.groups.prefix.trim();
+  const isSafePrefix =
+    !prefix ||
+    /^\d{6,}$/.test(prefix) ||
+    isCreditCardSupplementalDetail(prefix);
+
+  if (!isSafePrefix) {
+    return Number.NaN;
+  }
+
+  return parseMoney(match.groups.amount);
+}
+
+function isCreditCardStructuralLine(line) {
+  return (
+    /subtotal of monthly activity/i.test(line) ||
+    /transaction posting date date/i.test(line) ||
+    /activity description/i.test(line) ||
+    /time to pay/i.test(line) ||
+    /interest rate chart/i.test(line) ||
+    /total account balance/i.test(line) ||
+    /important information about your/i.test(line) ||
+    /if you make only the/i.test(line) ||
+    /this estimate is intended solely/i.test(line) ||
+    /description rate \(%\) remaining balance/i.test(line) ||
+    /payment due date/i.test(line) ||
+    /statement-\d+/i.test(line) ||
+    /\*{2,}\s*\d{4}\s*-\s*primary/i.test(line)
+  );
 }
 
 function categorizeTransaction(description, amount, statementKind) {
   const lower = description.toLowerCase();
-  if (/(payment|refund|credit|return|reversal|adjustment|cash back|cashback)/i.test(lower)) {
+  if (
+    /(payment thank you|refund|merchant credit|return|reversal|adjustment|cash back|cashback|credit voucher)/i.test(
+      lower
+    )
+  ) {
     return "Credits";
   }
   for (const rule of categoryRules) {
@@ -401,16 +778,91 @@ function categorizeTransaction(description, amount, statementKind) {
 function render() {
   syncSelection();
   syncActiveStatementTab();
+  renderView();
   renderOverview();
   renderStatements();
   renderFlowChart();
   renderCategoryChart();
   renderBalanceChart();
+  renderCreditCardSpendChart();
   renderTimelineChart();
+  renderEntryFlow();
+  renderDraftStatementFields();
   renderTransactionFilters();
   renderTransactionTabs();
+  renderEntryActions();
   renderBulkCategoryTools();
   renderTransactionTable();
+}
+
+function renderEntryFlow() {
+  const hasDraft = isReviewingDraft();
+  const hasKind = Boolean(state.pendingStatementKind);
+
+  els.statementTypeStep.classList.toggle("hidden", hasKind);
+  els.statementTypeChip.classList.toggle("hidden", !hasKind);
+  els.dropzone.classList.toggle("hidden", !hasKind || hasDraft);
+  els.draftReviewSection.classList.toggle("hidden", !hasDraft);
+
+  if (hasKind) {
+    els.statementTypeChipLabel.textContent =
+      state.pendingStatementKind === "credit-card" ? "Credit card statement" : "Debit / bank account statement";
+  }
+}
+
+function renderDraftStatementFields() {
+  if (!isReviewingDraft()) {
+    els.draftStatementFields.innerHTML = "";
+    return;
+  }
+
+  els.draftStatementFields.innerHTML = state.draftStatements
+    .map(
+      (statement, index) => `
+        <div class="draft-statement-card">
+          <div class="field-group">
+            <label for="draftMonth-${index}">Month</label>
+            <input
+              id="draftMonth-${index}"
+              type="text"
+              data-draft-field="monthLabel"
+              data-draft-index="${index}"
+              value="${escapeHtml(statement.monthLabel || "")}"
+              placeholder="e.g. May 2026"
+            />
+          </div>
+          <div class="field-group">
+            <label for="draftCard-${index}">Card / account</label>
+            <input
+              id="draftCard-${index}"
+              type="text"
+              data-draft-field="cardLabel"
+              data-draft-index="${index}"
+              value="${escapeHtml(statement.cardLabel || "")}"
+              placeholder="e.g. Cash Back Mastercard"
+            />
+          </div>
+          <span class="draft-statement-filename">${escapeHtml(statement.fileName)}</span>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function handleDraftStatementFieldInput(event) {
+  const input = event.target.closest("[data-draft-field]");
+  if (!input) {
+    return;
+  }
+
+  const index = Number(input.dataset.draftIndex);
+  const field = input.dataset.draftField;
+  const statement = state.draftStatements[index];
+  if (!statement) {
+    return;
+  }
+
+  statement[field] = input.value;
 }
 
 function renderOverview() {
@@ -436,6 +888,23 @@ function renderOverview() {
   els.netTotal.className = netChange < 0 ? "amount-negative" : "amount-positive";
 }
 
+function renderView() {
+  const isAllData = state.activeView === "all-data";
+  const isNewEntry = state.activeView === "new-entry";
+  const isBudget = state.activeView === "budget";
+
+  els.allDataPage.classList.toggle("hidden", !isAllData);
+  els.newEntryPage.classList.toggle("hidden", !isNewEntry);
+  els.budgetPage.classList.toggle("hidden", !isBudget);
+
+  els.allDataNavButton.classList.toggle("secondary-button", isAllData);
+  els.allDataNavButton.classList.toggle("ghost-button", !isAllData);
+  els.newEntryButton.classList.toggle("secondary-button", isNewEntry);
+  els.newEntryButton.classList.toggle("ghost-button", !isNewEntry);
+  els.budgetNavButton.classList.toggle("secondary-button", isBudget);
+  els.budgetNavButton.classList.toggle("ghost-button", !isBudget);
+}
+
 function renderStatements() {
   if (!state.statements.length) {
     els.statementSections.className = "stack-list empty-state";
@@ -449,8 +918,8 @@ function renderStatements() {
     .map(
       (statement) => `
         <article class="statement-card">
-          <h3>${escapeHtml(statement.fileName)}</h3>
-          <p>${escapeHtml(formatStatementType(statement.statementKind))} · ${escapeHtml(statement.accountType)} · ${escapeHtml(statement.statementPeriod)}</p>
+          <h3>${escapeHtml(statement.cardLabel || statement.fileName)}</h3>
+          <p>${escapeHtml(formatStatementType(statement.statementKind))} · ${escapeHtml(statement.monthLabel || statement.statementPeriod)}</p>
           <div class="statement-meta">
             <span class="chip">Holder: ${escapeHtml(statement.accountHolder)}</span>
             <span class="chip">Account: ${escapeHtml(statement.accountNumber)}</span>
@@ -501,9 +970,11 @@ function renderFlowChart() {
 }
 
 function renderCategoryChart() {
-  const outflowTransactions = state.transactions.filter((item) => item.flowType === "charge");
+  const outflowTransactions = state.transactions.filter(
+    (item) => item.flowType === "charge" && findSubmittedStatementKind(item) === "credit-card"
+  );
   if (!outflowTransactions.length) {
-    setEmpty(els.categoryChart, "Upload statements to classify your spending.");
+    setEmpty(els.categoryChart, "Credit card spending categories will show here.");
     return;
   }
 
@@ -532,7 +1003,7 @@ function renderCategoryChart() {
       <div class="donut" style="background: conic-gradient(${gradientParts});">
         <div class="donut-center">
           <strong>${formatMoney(total)}</strong>
-          <span>Total spending</span>
+          <span>Credit card spending</span>
         </div>
       </div>
       <div class="legend">
@@ -561,11 +1032,48 @@ function renderBalanceChart() {
   }
 
   const points = state.statements.map((statement, index) => ({
-    label: compactLabel(statement.statementPeriod, statement.fileName),
+    label: compactLabel(statement.statementPeriod, statement.cardLabel || statement.fileName),
     value: statement.closingBalance,
     index,
   }));
   renderLineChart(els.balanceChart, points, "Closing balance");
+}
+
+function renderCreditCardSpendChart() {
+  const creditCardCharges = state.statements
+    .filter((statement) => statement.statementKind === "credit-card")
+    .map((statement) => ({
+      label: compactLabel(statement.statementPeriod, statement.cardLabel || statement.fileName),
+      value: sumAmounts(
+        (statement.transactions || [])
+          .filter((transaction) => transaction.flowType === "charge")
+          .map((transaction) => Math.abs(transaction.amount))
+      ),
+    }))
+    .filter((entry) => entry.value > 0);
+
+  if (!creditCardCharges.length) {
+    setEmpty(els.creditCardSpendChart, "Credit card monthly spending will show here.");
+    return;
+  }
+
+  const max = Math.max(...creditCardCharges.map((entry) => entry.value), 1);
+  els.creditCardSpendChart.className = "chart-area";
+  els.creditCardSpendChart.innerHTML = `
+    <div class="bar-chart">
+      ${creditCardCharges
+        .map(
+          (entry) => `
+            <div class="bar-item">
+              <div class="bar-value">${formatMoney(entry.value)}</div>
+              <div class="bar-visual" style="height:${Math.max((entry.value / max) * 220, 24)}px; background:linear-gradient(180deg, #6f84f7, #b457b8);"></div>
+              <div class="bar-label">${escapeHtml(entry.label)}</div>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
 }
 
 function renderTimelineChart() {
@@ -576,7 +1084,7 @@ function renderTimelineChart() {
 
   const buckets = {};
   state.transactions.forEach((tx) => {
-    if (tx.flowType !== "charge") {
+    if (tx.flowType !== "charge" || findSubmittedStatementKind(tx) !== "credit-card") {
       return;
     }
     const key = tx.isoDate || tx.dateLabel;
@@ -641,11 +1149,11 @@ function renderLineChart(container, points, label) {
 }
 
 function renderTransactionTable() {
-  if (!state.transactions.length) {
+  if (!getReviewTransactions().length) {
     els.bulkCategoryTools.classList.add("hidden");
     els.transactionFilters.classList.add("hidden");
     els.transactionTabs.classList.add("hidden");
-    setEmpty(els.transactionTable, "Parsed transactions will be listed here.");
+    setEmpty(els.transactionTable, "Start a new entry to review parsed transactions before submitting them.");
     return;
   }
 
@@ -662,11 +1170,21 @@ function renderTransactionTable() {
       (tx) => `
         <tr class="transaction-row ${isTransactionSelected(tx.id) ? "selected-row" : ""}" data-transaction-id="${escapeHtml(tx.id)}">
           <td>${escapeHtml(tx.dateLabel)}</td>
+          <td>${escapeHtml(tx.postingDateLabel || "—")}</td>
           <td>${escapeHtml(tx.description)}</td>
           <td>${renderCategoryBadge(tx.category)}</td>
           <td class="${tx.flowType === "credit" ? "amount-positive" : "amount-negative"}">${formatMoney(tx.amount)}</td>
           <td>${tx.balanceAfter === null ? "—" : formatMoney(tx.balanceAfter)}</td>
           <td>${escapeHtml(tx.fileName)}</td>
+          <td>
+            <button
+              type="button"
+              class="delete-transaction-button"
+              data-delete-transaction-id="${escapeHtml(tx.id)}"
+              title="Delete transaction"
+              aria-label="Delete transaction"
+            >✕</button>
+          </td>
         </tr>
       `
     )
@@ -677,12 +1195,14 @@ function renderTransactionTable() {
     <table>
       <thead>
         <tr>
-          <th>Date</th>
+          <th>Transaction Date</th>
+          <th>Posting Date</th>
           <th>Description</th>
           <th>Category</th>
           <th>Amount</th>
           <th>Balance After</th>
           <th>Statement</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -696,8 +1216,18 @@ function renderBulkCategoryTools() {
   els.selectionCount.textContent = `${state.selectedTransactionIds.length} selected`;
 }
 
+function renderEntryActions() {
+  const hasDraft = isReviewingDraft();
+  els.entryActions.classList.toggle("hidden", !hasDraft);
+  if (!hasDraft) {
+    return;
+  }
+
+  els.entrySummary.textContent = `${state.draftStatements.length} draft statement${state.draftStatements.length === 1 ? "" : "s"} · ${state.draftTransactions.length} parsed transaction${state.draftTransactions.length === 1 ? "" : "s"}`;
+}
+
 function renderTransactionFilters() {
-  const hasTransactions = state.transactions.length > 0;
+  const hasTransactions = getReviewTransactions().length > 0;
   els.transactionFilters.classList.toggle("hidden", !hasTransactions);
   els.searchFilter.value = state.filters.search;
   els.categoryFilter.value = state.filters.category;
@@ -718,7 +1248,7 @@ function renderTransactionTabs() {
     ...tabs.map(
       (statement) => `
         <button class="tab-button ${state.activeStatementKey === buildStatementKey(statement) ? "active" : ""}" type="button" data-statement-key="${escapeHtml(buildStatementKey(statement))}">
-          ${escapeHtml(statement.fileName)}
+          ${escapeHtml(statement.cardLabel || statement.fileName)}
         </button>
       `
     ),
@@ -744,6 +1274,12 @@ function handleFilterInput() {
 }
 
 function handleTransactionTableClick(event) {
+  const deleteButton = event.target.closest("[data-delete-transaction-id]");
+  if (deleteButton) {
+    deleteTransactions([deleteButton.dataset.deleteTransactionId]);
+    return;
+  }
+
   const row = event.target.closest(".transaction-row");
   if (!row) {
     return;
@@ -789,7 +1325,8 @@ function applyBulkCategory() {
   }
 
   const selectedIds = new Set(state.selectedTransactionIds);
-  state.statements.forEach((statement) => {
+  const targetStatements = isReviewingDraft() ? state.draftStatements : state.statements;
+  targetStatements.forEach((statement) => {
     statement.transactions.forEach((transaction) => {
       if (selectedIds.has(transaction.id)) {
         transaction.category = nextCategory;
@@ -802,8 +1339,12 @@ function applyBulkCategory() {
     );
   });
 
-  state.transactions = state.statements.flatMap((statement) => statement.transactions || []);
-  persistStatements();
+  if (isReviewingDraft()) {
+    state.draftTransactions = state.draftStatements.flatMap((statement) => statement.transactions || []);
+  } else {
+    state.transactions = state.statements.flatMap((statement) => statement.transactions || []);
+    persistStatements();
+  }
   setStatus(
     `Updated ${state.selectedTransactionIds.length} transaction${state.selectedTransactionIds.length === 1 ? "" : "s"} to ${nextCategory}.`
   );
@@ -811,9 +1352,51 @@ function applyBulkCategory() {
   render();
 }
 
+function deleteSelectedTransactions() {
+  if (!state.selectedTransactionIds.length) {
+    setStatus("Select one or more transactions first.");
+    return;
+  }
+
+  deleteTransactions(state.selectedTransactionIds);
+}
+
+function deleteTransactions(transactionIds) {
+  const idsToDelete = new Set(transactionIds);
+  if (!idsToDelete.size) {
+    return;
+  }
+
+  const targetStatements = isReviewingDraft() ? state.draftStatements : state.statements;
+  targetStatements.forEach((statement) => {
+    statement.transactions = (statement.transactions || []).filter(
+      (transaction) => !idsToDelete.has(transaction.id)
+    );
+    statement.serviceFees = sumAmounts(
+      statement.transactions
+        .filter((transaction) => transaction.category === "Fees")
+        .map((transaction) => Math.abs(transaction.amount))
+    );
+  });
+
+  if (isReviewingDraft()) {
+    state.draftTransactions = state.draftStatements.flatMap((statement) => statement.transactions || []);
+  } else {
+    state.transactions = state.statements.flatMap((statement) => statement.transactions || []);
+    persistStatements();
+  }
+
+  setStatus(`Deleted ${idsToDelete.size} transaction${idsToDelete.size === 1 ? "" : "s"}.`);
+  state.selectedTransactionIds = [];
+  render();
+}
+
 function clearDashboard() {
   state.statements = [];
   state.transactions = [];
+  state.draftStatements = [];
+  state.draftTransactions = [];
+  state.draftFiles = [];
   state.selectedTransactionIds = [];
   state.activeStatementKey = "all";
   els.fileInput.value = "";
@@ -906,10 +1489,46 @@ function loadDemoData() {
   ];
 
   state.transactions = state.statements.flatMap((statement) => statement.transactions);
+  state.draftStatements = [];
+  state.draftTransactions = [];
+  state.draftFiles = [];
   state.selectedTransactionIds = [];
   state.activeStatementKey = "all";
   persistStatements();
   setStatus("Demo data loaded and saved locally. You can still upload your own PDFs anytime.");
+  render();
+}
+
+async function submitDraftEntry() {
+  if (!isReviewingDraft()) {
+    setStatus("There is no draft entry to submit right now.");
+    return;
+  }
+
+  const merged = [...state.statements, ...state.draftStatements];
+  const byFile = new Map(merged.map((statement) => [buildStatementKey(statement), statement]));
+  state.statements = Array.from(byFile.values()).sort(sortByPeriod);
+  state.transactions = state.statements.flatMap((statement) => statement.transactions || []);
+  persistStatements();
+
+  const archiveSummary = await archiveUploadedFiles(state.draftFiles);
+  const submittedCount = state.draftStatements.length;
+  clearDraftState();
+  switchView("all-data");
+  setStatus(
+    `Submitted ${submittedCount} draft statement${submittedCount === 1 ? "" : "s"} into your totals. ${archiveSummary}`
+  );
+  render();
+}
+
+function discardDraftEntry() {
+  if (!isReviewingDraft()) {
+    setStatus("There is no draft entry to discard.");
+    return;
+  }
+
+  clearDraftState();
+  setStatus("Draft entry discarded. Your saved totals were not changed.");
   render();
 }
 
@@ -929,10 +1548,23 @@ function createDemoTx(dateLabel, description, amount, balanceAfter, category, fl
 }
 
 function detectStatementKind(text, accountType) {
-  if (/(visa|mastercard|credit card|minimum payment|credit limit|available credit)/i.test(text) || /visa|mastercard|credit card/i.test(accountType)) {
+  if (/(day to day banking|signature no limit banking|high interest esavings|chequing|savings)/i.test(accountType)) {
+    return "bank-account";
+  }
+  if (/(visa|mastercard|credit card)/i.test(accountType)) {
     return "credit-card";
   }
-  return "bank-account";
+
+  const creditCardSignals = [
+    /minimum payment/i,
+    /credit limit/i,
+    /available credit/i,
+    /payment due date/i,
+    /previous account balance/i,
+    /calculating your balance/i,
+  ].filter((pattern) => pattern.test(text)).length;
+
+  return creditCardSignals >= 2 ? "credit-card" : "bank-account";
 }
 
 function normalizeStatementText(text) {
@@ -946,40 +1578,69 @@ function normalizeStatementText(text) {
 
 function splitMergedTransactionLines(line) {
   return line
-    .split(/(?=(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}\b)/)
+    .split(
+      /(?=(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}\b)|(?=\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\b)|(?=\b\d{1,2}\/\d{1,2}\b)/
+    )
     .map((part) => part.trim())
     .filter(Boolean);
 }
 
 function shouldIgnoreLine(line) {
-  return /^(page \d+|date description amount|date details amount|transaction details|account summary)$/i.test(
-    line.trim()
+  const trimmed = line.trim();
+  return (
+    /^(page \d+|date description amount|date details amount|transaction details|account summary)$/i.test(
+      trimmed
+    ) ||
+    /^\d+\s+of\s+\d+$/i.test(trimmed) ||
+    /^date\s+description\s+withdrawals/i.test(trimmed) ||
+    /^details of your account activity/i.test(trimmed) ||
+    /please check this account statement/i.test(trimmed) ||
+    /if you opted to receive cheque images/i.test(trimmed) ||
+    /please retain this statement/i.test(trimmed) ||
+    /trademarks? of royal bank/i.test(trimmed) ||
+    /registered trade-mark/i.test(trimmed) ||
+    /licensees of the trade-mark/i.test(trimmed) ||
+    /gst registration number/i.test(trimmed)
   );
 }
 
 function extractStatementPeriod(text) {
-  return (
-    firstMatch(text, [
-      /statement (?:from|period)\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}\s*(?:to|-)\s*[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i,
-      /for the period\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}\s*(?:to|-)\s*[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i,
-      /([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}\s+to\s+[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i,
-    ]) || ""
-  );
+  return firstMatch(text, [
+    /statement (?:from|period)\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}\s*(?:to|-)\s*[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i,
+    /for the period\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}\s*(?:to|-)\s*[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i,
+    /statement period\s*[:\-]?\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}\s*(?:to|-)\s*[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i,
+    /statement period\s*[:\-]?\s*([A-Za-z]{3,9}\s+\d{1,2}\s*(?:to|-)\s*[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i,
+    /transactions?\s+(?:from|for)\s+([A-Za-z]{3,9}\s+\d{1,2}\s*(?:to|-)\s*[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i,
+    /([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}\s+to\s+[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i,
+    /(\d{1,2}\/\d{1,2}\/\d{2,4}\s*(?:to|-)\s*\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    /([A-Za-z]{3,9}\s+\d{1,2}\s*(?:to|-)\s*[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i,
+  ]) || "";
 }
 
 function cleanTransactionLine(line) {
   return line
     .replace(/\s{2,}/g, " ")
     .replace(/\b(CR|DR)\b/gi, "")
+    .replace(/\bavailable credit\b.*$/i, "")
+    .replace(/\bcredit limit\b.*$/i, "")
+    .replace(/\bminimum payment\b.*$/i, "")
+    .replace(/\baccount summary\b.*$/i, "")
+    .replace(/\s+\d+\s+of\s+\d+\s*$/i, "")
+    .replace(/\s+page\s+\d+\s*$/i, "")
     .trim();
 }
 
-function parseTransactionLine(line, statementPeriod) {
+function parseTransactionLineStart(line, statementPeriod) {
+  const date =
+    "(?:\\d{1,2}\\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\s+\\d{1,2}|\\d{1,2}\\/\\d{1,2})";
+  const money = "\\(?-?\\$?\\d[\\d,]*\\.\\d{2}\\)?";
   const patterns = [
-    /^(?<date>(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2})\s+(?<description>.+?)\s+(?<amount>\(?-?\$?\d[\d,]*\.\d{2}\)?)\s+(?<balance>\(?-?\$?\d[\d,]*\.\d{2}\)?)$/i,
-    /^(?<date>(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2})\s+(?<description>.+?)\s+(?<amount>\(?-?\$?\d[\d,]*\.\d{2}\)?)$/i,
-    /^(?<date>\d{1,2}\/\d{1,2})\s+(?<description>.+?)\s+(?<amount>\(?-?\$?\d[\d,]*\.\d{2}\)?)\s+(?<balance>\(?-?\$?\d[\d,]*\.\d{2}\)?)$/i,
-    /^(?<date>\d{1,2}\/\d{1,2})\s+(?<description>.+?)\s+(?<amount>\(?-?\$?\d[\d,]*\.\d{2}\)?)$/i,
+    // Find the FIRST money-shaped token as the amount, an immediately-adjacent
+    // second one as the balance, and discard anything else trailing (e.g. a
+    // sidebar box sharing the same extracted row).
+    new RegExp(`^(?<date>${date})\\s+(?<description>.+?)\\s+(?<amount>${money})(?:\\s+(?<balance>${money}))?\\b.*$`, "i"),
+    // No money token anywhere on this line — leave amount unresolved for a later continuation line.
+    new RegExp(`^(?<date>${date})\\s+(?<description>.+)$`, "i"),
   ];
 
   for (const pattern of patterns) {
@@ -988,15 +1649,17 @@ function parseTransactionLine(line, statementPeriod) {
       continue;
     }
 
-    const description = normalizeDescription(match.groups.description);
-    if (isNonTransactionDescription(description)) {
+    const normalizedDescription = normalizeDescription(match.groups.description);
+    const descriptionDate = extractLeadingDescriptionDate(normalizedDescription, statementPeriod);
+    const description = stripLeadingDescriptionDate(normalizedDescription, statementPeriod);
+    if (isNonTransactionDescription(description) || looksLikeStatementBoilerplate(description)) {
       return null;
     }
 
     return {
-      dateLabel: normalizeDateLabel(match.groups.date, statementPeriod),
+      dateLabel: descriptionDate || normalizeDateLabel(match.groups.date, statementPeriod),
       description,
-      amount: parseMoney(match.groups.amount),
+      amount: match.groups.amount ? parseMoney(match.groups.amount) : null,
       balanceAfter: match.groups.balance ? parseMoney(match.groups.balance) : null,
     };
   }
@@ -1006,15 +1669,70 @@ function parseTransactionLine(line, statementPeriod) {
 
 function normalizeDescription(description) {
   return description
+    .replace(
+      /((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2})(?=(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}\b)/gi,
+      "$1 "
+    )
+    .replace(/^((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}|\d{1,2}\/\d{1,2})\s+/i, "")
     .replace(/\s{2,}/g, " ")
     .replace(/\bPOS\b/gi, "POS")
     .replace(/\bDBT\b/gi, "Debit")
     .trim();
 }
 
+function extractLeadingDescriptionDate(description, statementPeriod) {
+  const match = description.match(
+    /^(?<date>\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}|\d{1,2}\/\d{1,2})\b/i
+  );
+  if (!match?.groups?.date) {
+    return "";
+  }
+  return normalizeDateLabel(match.groups.date, statementPeriod);
+}
+
+function stripLeadingDescriptionDate(description, statementPeriod) {
+  const match = description.match(
+    /^(?<date>\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}|\d{1,2}\/\d{1,2})\s*(?<rest>.*)$/i
+  );
+  if (!match?.groups) {
+    return description;
+  }
+
+  const normalizedLeadingDate = normalizeDateLabel(match.groups.date, statementPeriod);
+  const originalLeadingDate = match.groups.date.replace(/\s+/g, " ").trim();
+  const rest = (match.groups.rest || "").trim();
+
+  if (!rest) {
+    return description;
+  }
+
+  if (
+    normalizedLeadingDate === originalLeadingDate.toUpperCase() ||
+    /^[A-Za-z0-9*]/.test(rest)
+  ) {
+    return rest;
+  }
+
+  return description;
+}
+
 function isNonTransactionDescription(description) {
-  return /^(opening balance|closing balance|new balance|payments and credits|purchases and debits|total deposits|total withdrawals)$/i.test(
+  return /^(opening balance|closing balance|new balance|payments and credits|purchases and debits|total deposits|total withdrawals|available credit|credit limit)$/i.test(
     description
+  );
+}
+
+function looksLikeStatementBoilerplate(description) {
+  return (
+    /subtotal of monthly activity/i.test(description) ||
+    /transaction posting date/i.test(description) ||
+    /time to pay/i.test(description) ||
+    /total account balance/i.test(description) ||
+    /interest rate chart/i.test(description) ||
+    /important information/i.test(description) ||
+    /payment due date/i.test(description) ||
+    /statement-\d+/i.test(description) ||
+    /\*{2,}\s*\d{4}\s*-\s*primary/i.test(description)
   );
 }
 
@@ -1116,8 +1834,11 @@ function sortByPeriod(a, b) {
 }
 
 function extractEndDate(period) {
-  const parts = period.split(/\bto\b|-/i).map((part) => part.trim());
-  return parts.length > 1 ? toSortableDate(parts[1]) : "";
+  const rangeMatch = period.match(/(.+?)\s*(?:to|-)\s*(.+)/i);
+  if (!rangeMatch) {
+    return toSortableDate(period);
+  }
+  return toSortableDate(rangeMatch[2].trim(), period);
 }
 
 function toApproxIsoDate(dateLabel, statementPeriod) {
@@ -1128,12 +1849,34 @@ function toApproxIsoDate(dateLabel, statementPeriod) {
   return toSortableDate(`${dateLabel} ${year}`);
 }
 
-function toSortableDate(value) {
-  const date = new Date(value);
+function toSortableDate(value, periodHint = "") {
+  const prepared = normalizeDateForParsing(value, periodHint);
+  const date = new Date(prepared);
   if (Number.isNaN(date.getTime())) {
     return "";
   }
   return date.toISOString().slice(0, 10);
+}
+
+function normalizeDateForParsing(value, periodHint = "") {
+  const trimmed = value.trim();
+  const hintedYear = extractStatementYear(periodHint);
+
+  if (/^\d{1,2}\/\d{1,2}\/\d{2}$/.test(trimmed)) {
+    const [month, day, year] = trimmed.split("/");
+    return `20${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) {
+    const [month, day, year] = trimmed.split("/");
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  if (/^[A-Za-z]{3,9}\s+\d{1,2}$/.test(trimmed) && hintedYear) {
+    return `${trimmed} ${hintedYear}`;
+  }
+
+  return trimmed;
 }
 
 function compactLabel(statementPeriod, fallback) {
@@ -1207,6 +1950,8 @@ function buildArchivedStatementPayload(statement) {
       id: transaction.id,
       dateLabel: transaction.dateLabel,
       isoDate: transaction.isoDate,
+      postingDateLabel: transaction.postingDateLabel || "",
+      postingIsoDate: transaction.postingIsoDate || "",
       description: transaction.description,
       category: transaction.category,
       flowType: transaction.flowType,
@@ -1216,9 +1961,104 @@ function buildArchivedStatementPayload(statement) {
   };
 }
 
+function isReviewingDraft() {
+  return state.draftStatements.length > 0;
+}
+
+function getCurrentStatements() {
+  return isReviewingDraft() ? state.draftStatements : state.statements;
+}
+
+function getCurrentTransactions() {
+  return isReviewingDraft() ? state.draftTransactions : state.transactions;
+}
+
+function getReviewStatements() {
+  return state.draftStatements;
+}
+
+function getReviewTransactions() {
+  return state.draftTransactions;
+}
+
+function clearDraftState() {
+  state.draftStatements = [];
+  state.draftTransactions = [];
+  state.draftFiles = [];
+  state.selectedTransactionIds = [];
+  state.activeStatementKey = "all";
+  state.pendingStatementKind = null;
+  resetFilters();
+  els.fileInput.value = "";
+}
+
+function focusEntryPanel() {
+  switchView("new-entry");
+  els.entryPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function chooseStatementKind(kind) {
+  state.pendingStatementKind = kind;
+  render();
+}
+
+function changeStatementKind() {
+  state.pendingStatementKind = null;
+  state.draftStatements = [];
+  state.draftTransactions = [];
+  state.draftFiles = [];
+  state.selectedTransactionIds = [];
+  els.fileInput.value = "";
+  render();
+}
+
+function guessCardLabel(fileName, statement) {
+  const baseName = fileName.replace(/\.pdf$/i, "");
+  const cleaned = baseName
+    .replace(/statement[\s-]*/i, " ")
+    .replace(/\d{4}-\d{2}-\d{2}/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  if (cleaned) {
+    return cleaned;
+  }
+
+  if (statement.accountNumber && statement.accountNumber !== "Unavailable") {
+    return `${statement.accountType} ${statement.accountNumber}`.trim();
+  }
+
+  return statement.accountType;
+}
+
+function guessMonthLabel(statementPeriod) {
+  const endDate = extractEndDate(statementPeriod);
+  if (!endDate) {
+    return "";
+  }
+
+  const date = new Date(`${endDate}T12:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleDateString("en-CA", { month: "long", year: "numeric" });
+}
+
+function switchView(view) {
+  state.activeView = view;
+  render();
+}
+
+function resetFilters() {
+  state.filters.search = "";
+  state.filters.category = "";
+  state.filters.flow = "";
+}
+
 async function archiveUploadedFiles(items) {
   if (!items.length) {
-    return "No statements were archived.";
+    return "No original PDFs needed archiving.";
   }
 
   const summaryByMonth = new Map();
@@ -1261,9 +2101,8 @@ async function archiveUploadedFiles(items) {
     }
   }
 
-  const parsedMessage = `Parsed ${state.statements.length} statement${state.statements.length === 1 ? "" : "s"} and saved parsed data in your browser.`;
   if (!archiveAvailable && savedCount === 0) {
-    return `${parsedMessage} File archiving is unavailable until you run \`python3 server.py\`.`;
+    return "File archiving is unavailable until you run `python3 server.py`.";
   }
 
   const monthSummary = Array.from(summaryByMonth.entries())
@@ -1271,10 +2110,10 @@ async function archiveUploadedFiles(items) {
     .join(", ");
 
   if (!archiveAvailable) {
-    return `${parsedMessage} Archived ${savedCount} original PDF${savedCount === 1 ? "" : "s"} locally (${monthSummary}), but some files could not be archived.`;
+    return `Archived ${savedCount} original PDF${savedCount === 1 ? "" : "s"} locally (${monthSummary}), but some files could not be archived.`;
   }
 
-  return `${parsedMessage} Archived ${savedCount} original PDF${savedCount === 1 ? "" : "s"} locally${monthSummary ? ` (${monthSummary})` : ""}.`;
+  return `Archived ${savedCount} original PDF${savedCount === 1 ? "" : "s"} locally${monthSummary ? ` (${monthSummary})` : ""}.`;
 }
 
 function populateCategoryOptions() {
@@ -1345,12 +2184,12 @@ function normalizeStatementCategories(statements) {
 }
 
 function syncSelection() {
-  const validIds = new Set(state.transactions.map((transaction) => transaction.id));
+  const validIds = new Set(getReviewTransactions().map((transaction) => transaction.id));
   state.selectedTransactionIds = state.selectedTransactionIds.filter((id) => validIds.has(id));
 }
 
 function syncActiveStatementTab() {
-  const validKeys = new Set(["all", ...state.statements.map((statement) => buildStatementKey(statement))]);
+  const validKeys = new Set(["all", ...getReviewStatements().map((statement) => buildStatementKey(statement))]);
   if (!validKeys.has(state.activeStatementKey)) {
     state.activeStatementKey = "all";
   }
@@ -1372,11 +2211,11 @@ function removeSelectedTransaction(transactionId) {
 }
 
 function getStatementTabs() {
-  return [...state.statements];
+  return [...getReviewStatements()];
 }
 
 function getVisibleTransactions() {
-  return state.transactions.filter((transaction) => {
+  return getReviewTransactions().filter((transaction) => {
     if (state.activeStatementKey !== "all") {
       const statementKey = buildStatementKey({
         fileName: transaction.fileName,
@@ -1409,7 +2248,7 @@ function getVisibleTransactions() {
 }
 
 function findStatementForTransaction(transaction) {
-  return state.statements.find(
+  return getReviewStatements().find(
     (statement) =>
       statement.fileName === transaction.fileName &&
       statement.statementPeriod === transaction.statementPeriod &&
@@ -1423,6 +2262,17 @@ function findStatementAccountNumber(transaction) {
 
 function findStatementKind(transaction) {
   return findStatementForTransaction(transaction)?.statementKind || "";
+}
+
+function findSubmittedStatementKind(transaction) {
+  return (
+    state.statements.find(
+      (statement) =>
+        statement.fileName === transaction.fileName &&
+        statement.statementPeriod === transaction.statementPeriod &&
+        statement.transactions.some((item) => item.id === transaction.id)
+    )?.statementKind || ""
+  );
 }
 
 function shortDateLabel(label) {
