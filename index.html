@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
     <div class="page-shell">
       <header class="hero">
         <div class="hero-copy">
@@ -150,6 +151,12 @@
         </section>
 
         <section id="allDataPage" class="page-section">
+        <div class="month-selector-row">
+          <label for="monthSelector">Viewing</label>
+          <select id="monthSelector" class="category-select" aria-label="Filter all data by month">
+            <option value="">All months</option>
+          </select>
+        </div>
         <section class="overview-grid">
           <article class="metric-card glass-card">
             <p>Total statements</p>
@@ -174,7 +181,7 @@
             <div class="card-heading">
               <div>
                 <p class="section-tag">Sections</p>
-                <h2>Statement breakdown</h2>
+                <h2>Month breakdown</h2>
               </div>
             </div>
             <div id="statementSections" class="stack-list empty-state">
@@ -237,6 +244,22 @@
                 <p class="section-tag">Visual 5</p>
                 <h2>Spending timeline</h2>
               </div>
+            </div>
+            <div class="timeline-filter-bar">
+              <div class="granularity-toggle" id="timelineGranularityToggle">
+                <button type="button" class="tab-button active" data-granularity="day">Day</button>
+                <button type="button" class="tab-button" data-granularity="week">Week</button>
+                <button type="button" class="tab-button" data-granularity="month">Month</button>
+              </div>
+              <select id="timelineCategoryFilter" class="category-select" aria-label="Filter timeline by category">
+                <option value="">All categories</option>
+              </select>
+              <select id="timelineAccountFilter" class="category-select" aria-label="Filter timeline by account">
+                <option value="">All accounts</option>
+              </select>
+              <input id="timelineFromDate" class="filter-input timeline-date-input" type="date" aria-label="From date" />
+              <input id="timelineToDate" class="filter-input timeline-date-input" type="date" aria-label="To date" />
+              <button id="timelineFilterClear" class="ghost-button compact-button" type="button">Reset</button>
             </div>
             <div id="timelineChart" class="chart-area empty-state">
               Daily or statement-level spending trends will show here.

@@ -13,10 +13,18 @@ const state = {
   activeStatementKey: "all",
   activeView: "all-data",
   pendingStatementKind: null,
+  activeMonth: "",
   filters: {
     search: "",
     category: "",
     flow: "",
+  },
+  timelineFilters: {
+    category: "",
+    account: "",
+    granularity: "day",
+    fromDate: "",
+    toDate: "",
   },
 };
 
@@ -59,6 +67,14 @@ const els = {
   searchFilter: document.querySelector("#searchFilter"),
   categoryFilter: document.querySelector("#categoryFilter"),
   flowFilter: document.querySelector("#flowFilter"),
+  monthSelector: document.querySelector("#monthSelector"),
+  toast: document.querySelector("#toast"),
+  timelineGranularityToggle: document.querySelector("#timelineGranularityToggle"),
+  timelineCategoryFilter: document.querySelector("#timelineCategoryFilter"),
+  timelineAccountFilter: document.querySelector("#timelineAccountFilter"),
+  timelineFromDate: document.querySelector("#timelineFromDate"),
+  timelineToDate: document.querySelector("#timelineToDate"),
+  timelineFilterClear: document.querySelector("#timelineFilterClear"),
   statementCount: document.querySelector("#statementCount"),
   incomeTotal: document.querySelector("#incomeTotal"),
   spendingTotal: document.querySelector("#spendingTotal"),
@@ -79,12 +95,16 @@ const categoryRules = [
   { name: "Transportation & Car", keywords: ["uber", "lyft", "shell", "esso", "petro", "transit", "parking", "presto", "gas", "insurance", "garage"] },
   { name: "Travel", keywords: ["air canada", "westjet", "hotel", "airbnb", "booking", "expedia", "flight", "trip"] },
   { name: "Shopping & Beauty", keywords: ["amazon", "shop", "store", "sephora", "indigo", "ikea", "marketplace", "beauty", "ulta"] },
-  { name: "Income", keywords: ["payroll", "salary", "deposit", "etransfer", "refund", "interest"] },
+  { name: "Income", keywords: ["payroll", "salary", "deposit", "refund", "interest"] },
   { name: "Fees", keywords: ["fee", "charge", "service"] },
   { name: "Cash", keywords: ["atm", "cash withdrawal"] },
 ];
 
-const palette = ["#ff8db1", "#b457b8", "#88d5b5", "#7ec8f4", "#ffb36c", "#7f95ff", "#ff7c70", "#52c4a8"];
+const debitOnlyCategoryRules = [
+  { name: "Credit Card Payment", keywords: ["mastercard", "visa preauth", "visa payment", "amex", "credit card payment", "cc payment", "mc preauth", "card payment"] },
+  { name: "E-Transfer", keywords: ["etransfer", "e-transfer", "interac", "email money transfer", "send money"] },
+];
+
 const categoryColorMap = {
   "Rent & Utilities": { solid: "#7f95ff", soft: "rgba(127, 149, 255, 0.14)", border: "rgba(127, 149, 255, 0.3)" },
   "Entertainment & Going Out": { solid: "#ff8db1", soft: "rgba(255, 141, 177, 0.14)", border: "rgba(255, 141, 177, 0.3)" },
@@ -98,6 +118,8 @@ const categoryColorMap = {
   Credits: { solid: "#88d5b5", soft: "rgba(136, 213, 181, 0.16)", border: "rgba(136, 213, 181, 0.3)" },
   Fees: { solid: "#d95b7a", soft: "rgba(217, 91, 122, 0.14)", border: "rgba(217, 91, 122, 0.28)" },
   Cash: { solid: "#8e8aa8", soft: "rgba(142, 138, 168, 0.14)", border: "rgba(142, 138, 168, 0.28)" },
+  "E-Transfer": { solid: "#f4b942", soft: "rgba(244, 185, 66, 0.16)", border: "rgba(244, 185, 66, 0.3)" },
+  "Credit Card Payment": { solid: "#6c5ce7", soft: "rgba(108, 92, 231, 0.14)", border: "rgba(108, 92, 231, 0.3)" },
 };
 const categoryOptions = [
   "Rent & Utilities",
@@ -112,6 +134,8 @@ const categoryOptions = [
   "Credits",
   "Fees",
   "Cash",
+  "E-Transfer",
+  "Credit Card Payment",
 ];
 
 init();
@@ -165,6 +189,13 @@ function init() {
   els.searchFilter.addEventListener("input", handleFilterInput);
   els.categoryFilter.addEventListener("change", handleFilterInput);
   els.flowFilter.addEventListener("change", handleFilterInput);
+  els.monthSelector.addEventListener("change", handleMonthSelectorChange);
+  els.timelineGranularityToggle.addEventListener("click", handleTimelineGranularityClick);
+  els.timelineCategoryFilter.addEventListener("change", handleTimelineFilterChange);
+  els.timelineAccountFilter.addEventListener("change", handleTimelineFilterChange);
+  els.timelineFromDate.addEventListener("change", handleTimelineFilterChange);
+  els.timelineToDate.addEventListener("change", handleTimelineFilterChange);
+  els.timelineFilterClear.addEventListener("click", handleTimelineFilterClear);
   render();
 }
 
@@ -755,6 +786,13 @@ function categorizeTransaction(description, amount, statementKind) {
   ) {
     return "Credits";
   }
+  if (statementKind !== "credit-card") {
+    for (const rule of debitOnlyCategoryRules) {
+      if (rule.keywords.some((keyword) => lower.includes(keyword))) {
+        return rule.name;
+      }
+    }
+  }
   for (const rule of categoryRules) {
     if (rule.keywords.some((keyword) => lower.includes(keyword))) {
       if (statementKind === "credit-card") {
@@ -779,6 +817,7 @@ function render() {
   syncSelection();
   syncActiveStatementTab();
   renderView();
+  renderMonthSelector();
   renderOverview();
   renderStatements();
   renderFlowChart();
@@ -866,19 +905,22 @@ function handleDraftStatementFieldInput(event) {
 }
 
 function renderOverview() {
+  const transactions = getMonthFilteredTransactions();
   const inflow = sumAmounts(
-    state.transactions
+    transactions
       .filter((transaction) => transaction.flowType === "credit")
       .map((transaction) => Math.abs(transaction.amount))
   );
   const outflow = sumAmounts(
-    state.transactions
+    transactions
       .filter((transaction) => transaction.flowType === "charge")
       .map((transaction) => Math.abs(transaction.amount))
   );
   const netChange = inflow - outflow;
 
-  els.statementCount.textContent = String(state.statements.length);
+  els.statementCount.textContent = state.activeMonth
+    ? String(new Set(transactions.map((transaction) => transaction.fileName)).size)
+    : String(state.statements.length);
   els.incomeTotal.previousElementSibling.textContent = "Total money in";
   els.spendingTotal.previousElementSibling.textContent = "Total money out";
   els.netTotal.previousElementSibling.textContent = "Net change";
@@ -906,35 +948,48 @@ function renderView() {
 }
 
 function renderStatements() {
-  if (!state.statements.length) {
+  const transactions = getMonthFilteredTransactions();
+  if (!transactions.length) {
     els.statementSections.className = "stack-list empty-state";
     els.statementSections.textContent =
       "Upload credit card or debit statements to see saved summaries, balances, and parsed sections.";
     return;
   }
 
+  const grouped = groupBy(transactions, (tx) => getTransactionMonthKey(tx) || "unknown");
+  const monthKeys = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+
   els.statementSections.className = "stack-list";
-  els.statementSections.innerHTML = state.statements
-    .map(
-      (statement) => `
+  els.statementSections.innerHTML = monthKeys
+    .map((monthKey) => {
+      const items = grouped[monthKey];
+      const inflow = sumAmounts(items.filter((tx) => tx.flowType === "credit").map((tx) => Math.abs(tx.amount)));
+      const outflow = sumAmounts(items.filter((tx) => tx.flowType === "charge").map((tx) => Math.abs(tx.amount)));
+      const fees = sumAmounts(items.filter((tx) => tx.category === "Fees").map((tx) => Math.abs(tx.amount)));
+      const statementLabels = Array.from(
+        new Set(
+          items.map((tx) => {
+            const statement = findStatementForTransaction(tx);
+            return statement ? statement.cardLabel || statement.fileName : tx.fileName;
+          })
+        )
+      );
+      const label = monthKey === "unknown" ? "Undated transactions" : formatMonthLabel(monthKey);
+
+      return `
         <article class="statement-card">
-          <h3>${escapeHtml(statement.cardLabel || statement.fileName)}</h3>
-          <p>${escapeHtml(formatStatementType(statement.statementKind))} · ${escapeHtml(statement.monthLabel || statement.statementPeriod)}</p>
-          <div class="statement-meta">
-            <span class="chip">Holder: ${escapeHtml(statement.accountHolder)}</span>
-            <span class="chip">Account: ${escapeHtml(statement.accountNumber)}</span>
-          </div>
+          <h3>${escapeHtml(label)}</h3>
+          <p>${statementLabels.length} statement${statementLabels.length === 1 ? "" : "s"} combined: ${escapeHtml(statementLabels.join(", "))}</p>
           <div class="section-summary">
-            <span class="chip">Opening ${formatMoney(statement.openingBalance)}</span>
-            <span class="chip">Closing ${formatMoney(statement.closingBalance)}</span>
-            <span class="chip">${escapeHtml(getInflowLabel(statement.statementKind))} ${formatMoney(getStatementInflow(statement))}</span>
-            <span class="chip">${escapeHtml(getOutflowLabel(statement.statementKind))} ${formatMoney(getStatementOutflow(statement))}</span>
-            <span class="chip">Fees ${formatMoney(statement.serviceFees)}</span>
-            <span class="chip">${statement.transactions.length} transactions</span>
+            <span class="chip">Money in ${formatMoney(inflow)}</span>
+            <span class="chip">Money out ${formatMoney(outflow)}</span>
+            <span class="chip">Net ${formatMoney(inflow - outflow)}</span>
+            <span class="chip">Fees ${formatMoney(fees)}</span>
+            <span class="chip">${items.length} transactions</span>
           </div>
         </article>
-      `
-    )
+      `;
+    })
     .join("");
 }
 
@@ -944,10 +999,11 @@ function renderFlowChart() {
     return;
   }
 
+  const transactions = getMonthFilteredTransactions();
   const series = [
-    { label: "Money in", value: sumAmounts(state.transactions.filter((item) => item.flowType === "credit").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #88d5b5, #52c4a8)" },
-    { label: "Money out", value: sumAmounts(state.transactions.filter((item) => item.flowType === "charge").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #ff8db1, #d95b7a)" },
-    { label: "Fees", value: sumAmounts(state.transactions.filter((item) => item.category === "Fees").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #ffb36c, #f58d47)" },
+    { label: "Money in", value: sumAmounts(transactions.filter((item) => item.flowType === "credit").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #88d5b5, #52c4a8)" },
+    { label: "Money out", value: sumAmounts(transactions.filter((item) => item.flowType === "charge").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #ff8db1, #d95b7a)" },
+    { label: "Fees", value: sumAmounts(transactions.filter((item) => item.category === "Fees").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #ffb36c, #f58d47)" },
   ];
 
   const max = Math.max(...series.map((item) => item.value), 1);
@@ -955,22 +1011,23 @@ function renderFlowChart() {
   els.flowChart.innerHTML = `
     <div class="bar-chart">
       ${series
-        .map(
-          (item) => `
+        .map((item) => {
+          const heightPx = Math.max((item.value / max) * 220, 24);
+          return `
             <div class="bar-item">
               <div class="bar-value">${formatMoney(item.value)}</div>
-              <div class="bar-visual" style="height:${Math.max((item.value / max) * 220, 24)}px; background:${item.color};"></div>
+              <div class="bar-visual" style="height:${heightPx}px; background:${item.color}; border-radius:${barRadius(heightPx)};"></div>
               <div class="bar-label">${item.label}</div>
             </div>
-          `
-        )
+          `;
+        })
         .join("")}
     </div>
   `;
 }
 
 function renderCategoryChart() {
-  const outflowTransactions = state.transactions.filter(
+  const outflowTransactions = getMonthFilteredTransactions().filter(
     (item) => item.flowType === "charge" && findSubmittedStatementKind(item) === "credit-card"
   );
   if (!outflowTransactions.length) {
@@ -1031,82 +1088,243 @@ function renderBalanceChart() {
     return;
   }
 
-  const points = state.statements.map((statement, index) => ({
-    label: compactLabel(statement.statementPeriod, statement.cardLabel || statement.fileName),
-    value: statement.closingBalance,
-    index,
-  }));
+  const points = state.statements.map((statement, index) => {
+    const dateLabel = compactLabel(statement.statementPeriod, statement.cardLabel || statement.fileName);
+    const accountHint = statement.accountNumber || (statement.statementKind === "credit-card" ? "Credit card" : "Bank");
+    return {
+      label: `${dateLabel} · ${accountHint}`,
+      value: statement.closingBalance,
+      index,
+    };
+  });
   renderLineChart(els.balanceChart, points, "Closing balance");
 }
 
 function renderCreditCardSpendChart() {
-  const creditCardCharges = state.statements
-    .filter((statement) => statement.statementKind === "credit-card")
-    .map((statement) => ({
-      label: compactLabel(statement.statementPeriod, statement.cardLabel || statement.fileName),
-      value: sumAmounts(
-        (statement.transactions || [])
-          .filter((transaction) => transaction.flowType === "charge")
-          .map((transaction) => Math.abs(transaction.amount))
-      ),
+  const creditCardCharges = state.transactions
+    .filter((tx) => tx.flowType === "charge" && findSubmittedStatementKind(tx) === "credit-card")
+    .reduce((acc, tx) => {
+      const key = getTransactionMonthKey(tx) || "unknown";
+      acc[key] = (acc[key] || 0) + Math.abs(tx.amount);
+      return acc;
+    }, {});
+
+  const entries = Object.entries(creditCardCharges)
+    .map(([monthKey, value]) => ({
+      label: monthKey === "unknown" ? "Unknown" : formatMonthLabel(monthKey),
+      value,
+      monthKey,
     }))
+    .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
     .filter((entry) => entry.value > 0);
 
-  if (!creditCardCharges.length) {
+  if (!entries.length) {
     setEmpty(els.creditCardSpendChart, "Credit card monthly spending will show here.");
     return;
   }
 
-  const max = Math.max(...creditCardCharges.map((entry) => entry.value), 1);
+  const max = Math.max(...entries.map((entry) => entry.value), 1);
   els.creditCardSpendChart.className = "chart-area";
   els.creditCardSpendChart.innerHTML = `
     <div class="bar-chart">
-      ${creditCardCharges
-        .map(
-          (entry) => `
-            <div class="bar-item">
+      ${entries
+        .map((entry) => {
+          const heightPx = Math.max((entry.value / max) * 220, 24);
+          const isActive = state.activeMonth && entry.monthKey === state.activeMonth;
+          const gradient = isActive
+            ? "linear-gradient(180deg, #4f5fe0, #8a3fa0)"
+            : "linear-gradient(180deg, #6f84f7, #b457b8)";
+          const opacity = state.activeMonth && !isActive ? "0.4" : "1";
+          return `
+            <div class="bar-item" style="opacity:${opacity};">
               <div class="bar-value">${formatMoney(entry.value)}</div>
-              <div class="bar-visual" style="height:${Math.max((entry.value / max) * 220, 24)}px; background:linear-gradient(180deg, #6f84f7, #b457b8);"></div>
+              <div class="bar-visual" style="height:${heightPx}px; background:${gradient}; border-radius:${barRadius(heightPx)};"></div>
               <div class="bar-label">${escapeHtml(entry.label)}</div>
             </div>
-          `
-        )
+          `;
+        })
         .join("")}
     </div>
   `;
 }
 
+function getTimelineBaseTransactions() {
+  return getMonthFilteredTransactions().filter(
+    (tx) => tx.flowType === "charge" && findSubmittedStatementKind(tx) === "credit-card"
+  );
+}
+
+function getWeekStartKey(isoDate) {
+  const date = new Date(`${isoDate}T12:00:00`);
+  const day = date.getDay();
+  const diff = (day === 0 ? -6 : 1) - day;
+  date.setDate(date.getDate() + diff);
+  return date.toISOString().slice(0, 10);
+}
+
+function getTimelineBucketKey(tx, granularity) {
+  const isoDate = tx.isoDate || "";
+  if (!isoDate) {
+    return tx.dateLabel;
+  }
+  if (granularity === "week") {
+    return getWeekStartKey(isoDate);
+  }
+  if (granularity === "month") {
+    return isoDate.slice(0, 7);
+  }
+  return isoDate;
+}
+
+function getTimelineBucketLabel(key, granularity) {
+  if (granularity === "month") {
+    return formatMonthLabel(key);
+  }
+  if (granularity === "week") {
+    return `Week of ${shortDateLabel(key)}`;
+  }
+  return shortDateLabel(key);
+}
+
+function renderTimelineFilterControls(baseTransactions) {
+  const categoryTotals = {};
+  const accountMap = new Map();
+  baseTransactions.forEach((tx) => {
+    categoryTotals[tx.category] = (categoryTotals[tx.category] || 0) + Math.abs(tx.amount);
+    const statement = findStatementForTransaction(tx);
+    if (statement?.accountNumber && !accountMap.has(statement.accountNumber)) {
+      accountMap.set(statement.accountNumber, statement.cardLabel || statement.accountType || statement.accountNumber);
+    }
+  });
+
+  const categoryOptionsList = Object.keys(categoryTotals).sort((a, b) => categoryTotals[b] - categoryTotals[a]);
+  els.timelineCategoryFilter.innerHTML =
+    `<option value="">All categories</option>` +
+    categoryOptionsList
+      .map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`)
+      .join("");
+  els.timelineCategoryFilter.value = state.timelineFilters.category;
+
+  els.timelineAccountFilter.innerHTML =
+    `<option value="">All accounts</option>` +
+    Array.from(accountMap.entries())
+      .map(([accountNumber, label]) => `<option value="${escapeHtml(accountNumber)}">${escapeHtml(label)} (${escapeHtml(accountNumber)})</option>`)
+      .join("");
+  els.timelineAccountFilter.value = state.timelineFilters.account;
+
+  els.timelineFromDate.value = state.timelineFilters.fromDate;
+  els.timelineToDate.value = state.timelineFilters.toDate;
+
+  els.timelineGranularityToggle.querySelectorAll("[data-granularity]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.granularity === state.timelineFilters.granularity);
+  });
+}
+
 function renderTimelineChart() {
-  if (!state.transactions.length) {
-    setEmpty(els.timelineChart, "Daily or statement-level spending trends will show here.");
+  const baseTransactions = getTimelineBaseTransactions();
+  renderTimelineFilterControls(baseTransactions);
+
+  const { category, account, granularity, fromDate, toDate } = state.timelineFilters;
+  const transactions = baseTransactions.filter((tx) => {
+    if (category && tx.category !== category) {
+      return false;
+    }
+    if (account && findStatementForTransaction(tx)?.accountNumber !== account) {
+      return false;
+    }
+    if (fromDate && (tx.isoDate || "") < fromDate) {
+      return false;
+    }
+    if (toDate && (tx.isoDate || "") > toDate) {
+      return false;
+    }
+    return true;
+  });
+
+  if (!transactions.length) {
+    setEmpty(els.timelineChart, "No spending matches the current timeline filters.");
     return;
   }
 
   const buckets = {};
-  state.transactions.forEach((tx) => {
-    if (tx.flowType !== "charge" || findSubmittedStatementKind(tx) !== "credit-card") {
-      return;
-    }
-    const key = tx.isoDate || tx.dateLabel;
-    buckets[key] = (buckets[key] || 0) + Math.abs(tx.amount);
+  transactions.forEach((tx) => {
+    const key = getTimelineBucketKey(tx, granularity);
+    buckets[key] = buckets[key] || {};
+    buckets[key][tx.category] = (buckets[key][tx.category] || 0) + Math.abs(tx.amount);
   });
 
-  const entries = Object.entries(buckets)
-    .map(([label, value]) => ({ label, value }))
-    .sort((a, b) => a.label.localeCompare(b.label))
-    .slice(-10);
+  const days = Object.entries(buckets)
+    .map(([key, categories]) => ({
+      key,
+      label: getTimelineBucketLabel(key, granularity),
+      categories,
+      total: sumAmounts(Object.values(categories)),
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key));
 
-  const max = Math.max(...entries.map((entry) => entry.value), 1);
+  const categoryTotals = {};
+  days.forEach((day) => {
+    Object.entries(day.categories).forEach(([cat, amount]) => {
+      categoryTotals[cat] = (categoryTotals[cat] || 0) + amount;
+    });
+  });
+  const categoryOrder = Object.entries(categoryTotals)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cat]) => cat);
+
+  const max = Math.max(...days.map((day) => day.total), 1);
+  const totalSpend = sumAmounts(days.map((day) => day.total));
+  const avgPerActiveBucket = totalSpend / days.length;
+  const peakDay = days.reduce((best, day) => (day.total > best.total ? day : best), days[0]);
+  const bucketNoun = granularity === "month" ? "month" : granularity === "week" ? "week" : "day";
+
   els.timelineChart.className = "chart-area";
   els.timelineChart.innerHTML = `
+    <div class="timeline-stats">
+      <span class="chip">Total ${formatMoney(totalSpend)}</span>
+      <span class="chip">Avg / active ${bucketNoun} ${formatMoney(avgPerActiveBucket)}</span>
+      <span class="chip">Peak ${bucketNoun} ${escapeHtml(peakDay.label)} · ${formatMoney(peakDay.total)}</span>
+    </div>
     <div class="timeline-chart">
-      ${entries
-        .map(
-          (entry, index) => `
+      ${days
+        .map((day) => {
+          const heightPx = Math.max((day.total / max) * 220, 24);
+          const safeTop = Math.min(18, heightPx / 2);
+          const safeBottom = Math.min(8, heightPx / 2);
+          const dayEntries = categoryOrder.filter((cat) => day.categories[cat]);
+          const segments = dayEntries
+            .map((cat, index) => {
+              const amount = day.categories[cat];
+              const segmentHeightPct = day.total > 0 ? (amount / day.total) * 100 : 0;
+              const isFirst = index === 0;
+              const isLast = index === dayEntries.length - 1;
+              const radius = `${isFirst ? `${safeTop}px ${safeTop}px` : "0 0"} ${isLast ? `${safeBottom}px ${safeBottom}px` : "0 0"}`;
+              const shareLabel = Math.round(segmentHeightPct);
+              return `<div class="timeline-segment" style="height:${segmentHeightPct}%; background:${getCategoryColor(cat).solid}; border-radius:${radius};" data-tooltip="${escapeHtml(cat)}: ${formatMoney(amount)} (${shareLabel}% of ${bucketNoun})"></div>`;
+            })
+            .join("");
+          return `
             <div class="timeline-bar">
-              <div class="timeline-value">${formatMoney(entry.value)}</div>
-              <div class="timeline-visual" style="height:${Math.max((entry.value / max) * 220, 24)}px; background:linear-gradient(180deg, ${palette[index % palette.length]}, #ffffff);"></div>
-              <div class="timeline-label">${escapeHtml(shortDateLabel(entry.label))}</div>
+              <div class="timeline-value">${formatMoney(day.total)}</div>
+              <div class="timeline-visual" style="height:${heightPx}px; display:flex; flex-direction:column;">
+                ${segments}
+              </div>
+              <div class="timeline-label">${escapeHtml(day.label)}</div>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+    <div class="legend timeline-legend">
+      ${categoryOrder
+        .map(
+          (cat) => `
+            <div class="legend-item">
+              <div class="legend-name">
+                <span class="swatch" style="background:${getCategoryColor(cat).solid}"></span>
+                <span>${escapeHtml(cat)}</span>
+              </div>
+              <strong>${formatMoney(categoryTotals[cat])}</strong>
             </div>
           `
         )
@@ -1132,17 +1350,29 @@ function renderLineChart(container, points, label) {
 
   const path = mapped.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
   const areaPath = `${path} L ${mapped[mapped.length - 1].x} ${height - pad} L ${mapped[0].x} ${height - pad} Z`;
+  const midValue = (max + min) / 2;
+  const midY = height - pad - ((midValue - min) / Math.max(max - min, 1)) * (height - pad * 2);
 
   container.className = "chart-area";
   container.innerHTML = `
-    <div>
-      <svg viewBox="0 0 ${width} ${height}" class="line-svg" aria-label="${escapeHtml(label)}">
-        <path d="${areaPath}" class="line-area"></path>
-        <path d="${path}" class="line-path"></path>
-        ${mapped.map((point) => `<circle class="point" cx="${point.x}" cy="${point.y}" r="6"></circle>`).join("")}
-      </svg>
-      <div class="axis-labels">
-        ${mapped.map((point) => `<span>${escapeHtml(point.label)}</span>`).join("")}
+    <div class="line-chart-wrap">
+      <div class="line-y-axis">
+        <span>${formatMoney(max)}</span>
+        <span>${formatMoney(midValue)}</span>
+        <span>${formatMoney(min)}</span>
+      </div>
+      <div class="line-chart-body">
+        <svg viewBox="0 0 ${width} ${height}" class="line-svg" aria-label="${escapeHtml(label)}">
+          <line x1="${pad}" y1="${pad}" x2="${width - pad}" y2="${pad}" class="grid-line"></line>
+          <line x1="${pad}" y1="${midY}" x2="${width - pad}" y2="${midY}" class="grid-line"></line>
+          <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="grid-line"></line>
+          <path d="${areaPath}" class="line-area"></path>
+          <path d="${path}" class="line-path"></path>
+          ${mapped.map((point) => `<circle class="point" cx="${point.x}" cy="${point.y}" r="6"></circle>`).join("")}
+        </svg>
+        <div class="axis-labels">
+          ${mapped.map((point) => `<span>${escapeHtml(point.label)}</span>`).join("")}
+        </div>
       </div>
     </div>
   `;
@@ -1263,6 +1493,33 @@ function handleTransactionTabClick(event) {
   state.activeStatementKey = button.dataset.statementKey || "all";
   state.selectedTransactionIds = [];
   render();
+}
+
+function handleMonthSelectorChange() {
+  state.activeMonth = els.monthSelector.value;
+  render();
+}
+
+function handleTimelineGranularityClick(event) {
+  const button = event.target.closest("[data-granularity]");
+  if (!button) {
+    return;
+  }
+  state.timelineFilters.granularity = button.dataset.granularity;
+  renderTimelineChart();
+}
+
+function handleTimelineFilterChange() {
+  state.timelineFilters.category = els.timelineCategoryFilter.value;
+  state.timelineFilters.account = els.timelineAccountFilter.value;
+  state.timelineFilters.fromDate = els.timelineFromDate.value;
+  state.timelineFilters.toDate = els.timelineToDate.value;
+  renderTimelineChart();
+}
+
+function handleTimelineFilterClear() {
+  state.timelineFilters = { category: "", account: "", granularity: "day", fromDate: "", toDate: "" };
+  renderTimelineChart();
 }
 
 function handleFilterInput() {
@@ -1400,7 +1657,7 @@ function clearDashboard() {
   state.selectedTransactionIds = [];
   state.activeStatementKey = "all";
   els.fileInput.value = "";
-  persistStatements();
+  persistStatements("Saved data cleared from this browser");
   setStatus("Saved data cleared from this browser.");
   render();
 }
@@ -1487,6 +1744,13 @@ function loadDemoData() {
       ],
     },
   ];
+
+  state.statements.forEach((statement) => {
+    statement.transactions.forEach((transaction) => {
+      transaction.fileName = statement.fileName;
+      transaction.statementPeriod = statement.statementPeriod;
+    });
+  });
 
   state.transactions = state.statements.flatMap((statement) => statement.transactions);
   state.draftStatements = [];
@@ -1811,8 +2075,59 @@ function formatMoney(value) {
   }).format(value || 0);
 }
 
+function getTransactionMonthKey(transaction) {
+  return (transaction.isoDate || "").slice(0, 7);
+}
+
+function getAvailableMonths() {
+  const months = new Set(
+    state.transactions.map((transaction) => getTransactionMonthKey(transaction)).filter(Boolean)
+  );
+  return Array.from(months).sort((a, b) => b.localeCompare(a));
+}
+
+function formatMonthLabel(monthKey) {
+  const [year, month] = monthKey.split("-").map(Number);
+  if (!year || !month) {
+    return monthKey;
+  }
+  return new Date(year, month - 1, 1).toLocaleDateString("en-CA", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function getMonthFilteredTransactions() {
+  if (!state.activeMonth) {
+    return state.transactions;
+  }
+  return state.transactions.filter(
+    (transaction) => getTransactionMonthKey(transaction) === state.activeMonth
+  );
+}
+
+function renderMonthSelector() {
+  const months = getAvailableMonths();
+  els.monthSelector.innerHTML =
+    `<option value="">All months</option>` +
+    months
+      .map((monthKey) => `<option value="${monthKey}">${escapeHtml(formatMonthLabel(monthKey))}</option>`)
+      .join("");
+
+  if (state.activeMonth && !months.includes(state.activeMonth)) {
+    state.activeMonth = "";
+  }
+  els.monthSelector.value = state.activeMonth;
+}
+
 function sumAmounts(values) {
   return values.reduce((sum, value) => sum + value, 0);
+}
+
+function barRadius(heightPx, topMax = 18, bottomMax = 8) {
+  const safeTop = Math.min(topMax, heightPx / 2);
+  const safeBottom = Math.min(bottomMax, heightPx / 2);
+  return `${safeTop}px ${safeTop}px ${safeBottom}px ${safeBottom}px`;
 }
 
 function matchValue(text, regex) {
@@ -1913,14 +2228,16 @@ function hydrateFromStorage() {
   }
 }
 
-function persistStatements() {
+function persistStatements(toastMessage = "Saved to this browser") {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state.statements));
+    showToast(toastMessage);
   } catch (error) {
     console.error(error);
     setStatus(
       "The dashboard updated, but browser storage is full so the data could not be saved permanently."
     );
+    showToast("Storage full — changes weren't saved", "error");
   }
 }
 
@@ -2131,26 +2448,6 @@ function populateCategoryOptions() {
   `;
 }
 
-function getStatementInflow(statement) {
-  return statement.totalInflow ?? statement.totalCredits ?? 0;
-}
-
-function getStatementOutflow(statement) {
-  return statement.totalOutflow ?? statement.totalCharges ?? 0;
-}
-
-function getInflowLabel(statementKind) {
-  return statementKind === "credit-card" ? "Credits" : "Deposits";
-}
-
-function getOutflowLabel(statementKind) {
-  return statementKind === "credit-card" ? "Charges" : "Withdrawals";
-}
-
-function formatStatementType(statementKind) {
-  return statementKind === "credit-card" ? "Credit card" : "Debit / bank";
-}
-
 function getCategoryColor(category) {
   return categoryColorMap[category] || categoryColorMap.Undecided;
 }
@@ -2248,7 +2545,7 @@ function getVisibleTransactions() {
 }
 
 function findStatementForTransaction(transaction) {
-  return getReviewStatements().find(
+  return getCurrentStatements().find(
     (statement) =>
       statement.fileName === transaction.fileName &&
       statement.statementPeriod === transaction.statementPeriod &&
@@ -2294,6 +2591,23 @@ function groupBy(items, getKey) {
 
 function setStatus(message) {
   els.status.textContent = message;
+}
+
+let toastTimer = null;
+
+function showToast(message, type = "success") {
+  els.toast.textContent = message;
+  els.toast.className = `toast ${type === "error" ? "toast-error" : ""}`.trim();
+  els.toast.classList.remove("hidden");
+  requestAnimationFrame(() => {
+    els.toast.classList.add("visible");
+  });
+
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    els.toast.classList.remove("visible");
+    setTimeout(() => els.toast.classList.add("hidden"), 250);
+  }, 2600);
 }
 
 function setEmpty(element, message) {
