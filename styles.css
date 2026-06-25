@@ -153,6 +153,7 @@ body::after {
   width: 180px;
   height: 180px;
   background: radial-gradient(circle, rgba(180, 87, 184, 0.22), transparent 70%);
+  pointer-events: none;
 }
 
 .hero h1,
@@ -428,6 +429,155 @@ td {
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.78);
   border: 1px solid rgba(117, 71, 139, 0.12);
+}
+
+.budget-start-field {
+  max-width: 220px;
+  margin-bottom: 1rem;
+}
+
+.budget-section-heading {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.budget-income-grid {
+  margin-bottom: 1.4rem;
+}
+
+.budget-allocation-note {
+  margin-bottom: 1rem;
+}
+
+.budget-allocation-warning {
+  color: var(--danger);
+  font-weight: 600;
+  margin-top: 0.85rem;
+}
+
+.budget-category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 1.1rem;
+}
+
+.budget-category-field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.budget-category-field label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+.budget-category-field input {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.6rem 0.9rem;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink);
+  font: inherit;
+}
+
+.budget-version-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  padding: 0.95rem 1.1rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--line);
+}
+
+.budget-version-meta h3 {
+  margin: 0 0 0.3rem;
+  font-size: 1.05rem;
+}
+
+.budget-version-meta p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.budget-version-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.budget-row {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.95rem 1.1rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--line);
+}
+
+.budget-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.budget-row-header h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.budget-row-amounts {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.budget-progress-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(117, 71, 139, 0.1);
+  overflow: hidden;
+}
+
+.budget-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--mint), #52c4a8);
+}
+
+.budget-progress-fill.over-budget {
+  background: linear-gradient(90deg, var(--danger), #c23b56);
+}
+
+.budget-row.no-budget-set .budget-row-header h4::after {
+  content: "No budget set";
+  margin-left: 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--danger);
+  text-transform: none;
+}
+
+.budget-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  padding: 1rem 1.1rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--line);
+  font-weight: 700;
 }
 
 button {

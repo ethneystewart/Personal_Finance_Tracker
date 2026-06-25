@@ -26,9 +26,12 @@ const state = {
     fromDate: "",
     toDate: "",
   },
+  budgets: [],
+  budgetMonth: "",
 };
 
 const STORAGE_KEY = "my-personal-finance-tracker-statements-v1";
+const BUDGETS_STORAGE_KEY = "my-personal-finance-tracker-budgets-v1";
 
 const els = {
   fileInput: document.querySelector("#fileInput"),
@@ -75,6 +78,15 @@ const els = {
   timelineFromDate: document.querySelector("#timelineFromDate"),
   timelineToDate: document.querySelector("#timelineToDate"),
   timelineFilterClear: document.querySelector("#timelineFilterClear"),
+  budgetStartMonth: document.querySelector("#budgetStartMonth"),
+  budgetCategoryInputs: document.querySelector("#budgetCategoryInputs"),
+  budgetIncomeGoal: document.querySelector("#budgetIncomeGoal"),
+  budgetAllocationChart: document.querySelector("#budgetAllocationChart"),
+  saveBudgetButton: document.querySelector("#saveBudgetButton"),
+  clearBudgetFormButton: document.querySelector("#clearBudgetFormButton"),
+  budgetVersionList: document.querySelector("#budgetVersionList"),
+  budgetMonthSelector: document.querySelector("#budgetMonthSelector"),
+  budgetPerformance: document.querySelector("#budgetPerformance"),
   statementCount: document.querySelector("#statementCount"),
   incomeTotal: document.querySelector("#incomeTotal"),
   spendingTotal: document.querySelector("#spendingTotal"),
@@ -103,6 +115,7 @@ const categoryRules = [
 const debitOnlyCategoryRules = [
   { name: "Credit Card Payment", keywords: ["mastercard", "visa preauth", "visa payment", "amex", "credit card payment", "cc payment", "mc preauth", "card payment"] },
   { name: "E-Transfer", keywords: ["etransfer", "e-transfer", "interac", "email money transfer", "send money"] },
+  { name: "Savings", keywords: ["savings transfer", "to savings", "from savings", "tfsa", "rrsp", "investment transfer"] },
 ];
 
 const categoryColorMap = {
@@ -120,6 +133,7 @@ const categoryColorMap = {
   Cash: { solid: "#8e8aa8", soft: "rgba(142, 138, 168, 0.14)", border: "rgba(142, 138, 168, 0.28)" },
   "E-Transfer": { solid: "#f4b942", soft: "rgba(244, 185, 66, 0.16)", border: "rgba(244, 185, 66, 0.3)" },
   "Credit Card Payment": { solid: "#6c5ce7", soft: "rgba(108, 92, 231, 0.14)", border: "rgba(108, 92, 231, 0.3)" },
+  Savings: { solid: "#3fc1c9", soft: "rgba(63, 193, 201, 0.16)", border: "rgba(63, 193, 201, 0.3)" },
 };
 const categoryOptions = [
   "Rent & Utilities",
@@ -136,13 +150,20 @@ const categoryOptions = [
   "Cash",
   "E-Transfer",
   "Credit Card Payment",
+  "Savings",
 ];
+const budgetExcludedCategories = ["Income", "Credits", "Cash", "Credit Card Payment", "E-Transfer"];
+const budgetableCategories = categoryOptions.filter(
+  (category) => !budgetExcludedCategories.includes(category)
+);
 
 init();
 
 function init() {
   hydrateFromStorage();
+  hydrateBudgetsFromStorage();
   populateCategoryOptions();
+  populateBudgetCategoryInputs();
 
   els.fileInput.addEventListener("change", (event) => {
     handleFiles(Array.from(event.target.files || []));
@@ -196,6 +217,12 @@ function init() {
   els.timelineFromDate.addEventListener("change", handleTimelineFilterChange);
   els.timelineToDate.addEventListener("change", handleTimelineFilterChange);
   els.timelineFilterClear.addEventListener("click", handleTimelineFilterClear);
+  els.saveBudgetButton.addEventListener("click", handleSaveBudget);
+  els.clearBudgetFormButton.addEventListener("click", handleClearBudgetForm);
+  els.budgetVersionList.addEventListener("click", handleBudgetVersionListClick);
+  els.budgetMonthSelector.addEventListener("change", handleBudgetMonthChange);
+  els.budgetCategoryInputs.addEventListener("input", renderBudgetAllocationChart);
+  els.budgetIncomeGoal.addEventListener("input", renderBudgetAllocationChart);
   render();
 }
 
@@ -780,7 +807,7 @@ function isCreditCardStructuralLine(line) {
 function categorizeTransaction(description, amount, statementKind) {
   const lower = description.toLowerCase();
   if (
-    /(payment thank you|refund|merchant credit|return|reversal|adjustment|cash back|cashback|credit voucher)/i.test(
+    /(payment\s*[-–—/]*\s*thank\s*you|refund|merchant credit|return|reversal|adjustment|cash back|cashback|credit voucher)/i.test(
       lower
     )
   ) {
@@ -832,6 +859,10 @@ function render() {
   renderEntryActions();
   renderBulkCategoryTools();
   renderTransactionTable();
+  renderBudgetVersionList();
+  renderBudgetMonthSelector();
+  renderBudgetPerformance();
+  renderBudgetAllocationChart();
 }
 
 function renderEntryFlow() {
@@ -1186,14 +1217,26 @@ function getTimelineBucketLabel(key, granularity) {
   return shortDateLabel(key);
 }
 
+function getTimelineAccountKey(statement) {
+  if (!statement) {
+    return "";
+  }
+  return statement.accountNumber && statement.accountNumber !== "Unavailable"
+    ? statement.accountNumber
+    : `file:${statement.fileName}`;
+}
+
 function renderTimelineFilterControls(baseTransactions) {
   const categoryTotals = {};
   const accountMap = new Map();
   baseTransactions.forEach((tx) => {
     categoryTotals[tx.category] = (categoryTotals[tx.category] || 0) + Math.abs(tx.amount);
     const statement = findStatementForTransaction(tx);
-    if (statement?.accountNumber && !accountMap.has(statement.accountNumber)) {
-      accountMap.set(statement.accountNumber, statement.cardLabel || statement.accountType || statement.accountNumber);
+    const accountKey = getTimelineAccountKey(statement);
+    if (accountKey && !accountMap.has(accountKey)) {
+      const accountSuffix =
+        statement.accountNumber && statement.accountNumber !== "Unavailable" ? ` (${statement.accountNumber})` : "";
+      accountMap.set(accountKey, `${statement.cardLabel || statement.accountType || statement.fileName}${accountSuffix}`);
     }
   });
 
@@ -1208,7 +1251,7 @@ function renderTimelineFilterControls(baseTransactions) {
   els.timelineAccountFilter.innerHTML =
     `<option value="">All accounts</option>` +
     Array.from(accountMap.entries())
-      .map(([accountNumber, label]) => `<option value="${escapeHtml(accountNumber)}">${escapeHtml(label)} (${escapeHtml(accountNumber)})</option>`)
+      .map(([accountKey, label]) => `<option value="${escapeHtml(accountKey)}">${escapeHtml(label)}</option>`)
       .join("");
   els.timelineAccountFilter.value = state.timelineFilters.account;
 
@@ -1229,7 +1272,7 @@ function renderTimelineChart() {
     if (category && tx.category !== category) {
       return false;
     }
-    if (account && findStatementForTransaction(tx)?.accountNumber !== account) {
+    if (account && getTimelineAccountKey(findStatementForTransaction(tx)) !== account) {
       return false;
     }
     if (fromDate && (tx.isoDate || "") < fromDate) {
@@ -1734,7 +1777,7 @@ function loadDemoData() {
         createDemoTx("Jun 01", "Payroll Deposit", 1625, 3450.22, "Income", "credit", "2026-06-01"),
         createDemoTx("Jun 03", "Rent Payment", -1550, 1900.22, "Rent & Utilities", "charge", "2026-06-03"),
         createDemoTx("Jun 04", "FreshCo Grocery", -128.10, 1772.12, "Groceries", "charge", "2026-06-04"),
-        createDemoTx("Jun 09", "E-Transfer Deposit", 250, 2022.12, "Income", "credit", "2026-06-09"),
+        createDemoTx("Jun 09", "E-Transfer Deposit", 250, 2022.12, "E-Transfer", "credit", "2026-06-09"),
         createDemoTx("Jun 11", "Hydro Payment", -96.34, 1925.78, "Rent & Utilities", "charge", "2026-06-11"),
         createDemoTx("Jun 14", "Shell Fuel", -74.88, 1850.90, "Transportation & Car", "charge", "2026-06-14"),
         createDemoTx("Jun 15", "Payroll Deposit", 1625, 3475.90, "Income", "credit", "2026-06-15"),
@@ -2120,6 +2163,360 @@ function renderMonthSelector() {
   els.monthSelector.value = state.activeMonth;
 }
 
+function populateBudgetCategoryInputs() {
+  els.budgetCategoryInputs.innerHTML = budgetableCategories
+    .map(
+      (category, index) => `
+        <div class="budget-category-field">
+          <label for="budgetAmount-${index}">
+            <span class="swatch" style="background:${getCategoryColor(category).solid}"></span>
+            ${escapeHtml(category)}
+          </label>
+          <input id="budgetAmount-${index}" type="number" min="0" step="1" placeholder="0" data-category="${escapeHtml(category)}" />
+        </div>
+      `
+    )
+    .join("");
+}
+
+function getBudgetFormValues() {
+  const amounts = {};
+  els.budgetCategoryInputs.querySelectorAll("input[data-category]").forEach((input) => {
+    amounts[input.dataset.category] = Number(input.value) || 0;
+  });
+  amounts.Income = Number(els.budgetIncomeGoal.value) || 0;
+  return {
+    startMonth: els.budgetStartMonth.value,
+    amounts,
+  };
+}
+
+function setBudgetFormValues(budget) {
+  els.budgetStartMonth.value = budget?.startMonth || "";
+  els.budgetCategoryInputs.querySelectorAll("input[data-category]").forEach((input) => {
+    const amount = budget?.amounts?.[input.dataset.category] || 0;
+    input.value = amount ? String(amount) : "";
+  });
+  const incomeGoal = budget?.amounts?.Income || 0;
+  els.budgetIncomeGoal.value = incomeGoal ? String(incomeGoal) : "";
+  renderBudgetAllocationChart();
+}
+
+function renderBudgetAllocationChart() {
+  const { amounts } = getBudgetFormValues();
+  const incomeGoal = amounts.Income || 0;
+  const spendingEntries = budgetableCategories
+    .map((category) => ({ category, value: amounts[category] || 0 }))
+    .filter((entry) => entry.value > 0);
+
+  if (!spendingEntries.length && !incomeGoal) {
+    setEmpty(
+      els.budgetAllocationChart,
+      "Enter a monthly income goal and some category amounts to see the breakdown."
+    );
+    return;
+  }
+
+  const totalSpending = sumAmounts(spendingEntries.map((entry) => entry.value));
+  const overAllocated = incomeGoal > 0 && totalSpending > incomeGoal;
+  const denominator = incomeGoal > 0 && !overAllocated ? incomeGoal : totalSpending;
+
+  let offset = 0;
+  const segments = spendingEntries.map((entry) => {
+    const start = offset;
+    const sharePct = denominator > 0 ? (entry.value / denominator) * 100 : 0;
+    offset = Math.min(offset + sharePct, 100);
+    return { ...entry, start, end: offset, sharePct };
+  });
+
+  const unallocatedPct = incomeGoal > 0 ? Math.max(100 - offset, 0) : 0;
+  const gradientParts = segments
+    .map((segment) => `${getCategoryColor(segment.category).solid} ${segment.start.toFixed(2)}% ${segment.end.toFixed(2)}%`)
+    .join(", ");
+  const gradient = !gradientParts
+    ? "rgba(117, 71, 139, 0.12)"
+    : unallocatedPct > 0
+      ? `${gradientParts}, rgba(117, 71, 139, 0.12) ${offset.toFixed(2)}% 100%`
+      : gradientParts;
+
+  els.budgetAllocationChart.className = "chart-area";
+  els.budgetAllocationChart.innerHTML = `
+    <div class="donut-wrap">
+      <div class="donut" style="background: conic-gradient(${gradient});">
+        <div class="donut-center">
+          <strong>${formatMoney(totalSpending)}</strong>
+          <span>${incomeGoal > 0 ? `of ${formatMoney(incomeGoal)} income` : "budgeted"}</span>
+        </div>
+      </div>
+      <div class="legend">
+        ${segments
+          .map(
+            (segment) => `
+              <div class="legend-item">
+                <div class="legend-name">
+                  <span class="swatch" style="background:${getCategoryColor(segment.category).solid}"></span>
+                  <span>${escapeHtml(segment.category)}</span>
+                </div>
+                <strong>${formatMoney(segment.value)} (${Math.round(segment.sharePct)}%)</strong>
+              </div>
+            `
+          )
+          .join("")}
+        ${
+          incomeGoal > 0 && unallocatedPct > 0.5
+            ? `<div class="legend-item">
+                <div class="legend-name">
+                  <span class="swatch" style="background:rgba(117, 71, 139, 0.35)"></span>
+                  <span>Unallocated</span>
+                </div>
+                <strong>${formatMoney(Math.max(incomeGoal - totalSpending, 0))} (${Math.round(unallocatedPct)}%)</strong>
+              </div>`
+            : ""
+        }
+      </div>
+    </div>
+    ${
+      overAllocated
+        ? `<p class="budget-allocation-warning">You've budgeted ${formatMoney(totalSpending - incomeGoal)} more than your income goal.</p>`
+        : ""
+    }
+  `;
+}
+
+function handleSaveBudget() {
+  const { startMonth, amounts } = getBudgetFormValues();
+  if (!startMonth) {
+    setStatus("Choose a start month before saving a budget.");
+    return;
+  }
+
+  const existing = state.budgets.find((budget) => budget.startMonth === startMonth);
+  if (existing) {
+    existing.amounts = amounts;
+  } else {
+    state.budgets.push({ id: crypto.randomUUID(), startMonth, amounts });
+  }
+  state.budgets.sort((a, b) => a.startMonth.localeCompare(b.startMonth));
+  state.budgetMonth = startMonth;
+  persistBudgets(`Budget saved for ${formatMonthLabel(startMonth)} onward`);
+  render();
+}
+
+function handleClearBudgetForm() {
+  setBudgetFormValues(null);
+}
+
+function handleBudgetVersionListClick(event) {
+  const editButton = event.target.closest("[data-edit-budget-id]");
+  if (editButton) {
+    const budget = state.budgets.find((item) => item.id === editButton.dataset.editBudgetId);
+    if (budget) {
+      setBudgetFormValues(budget);
+    }
+    return;
+  }
+
+  const deleteButton = event.target.closest("[data-delete-budget-id]");
+  if (deleteButton) {
+    state.budgets = state.budgets.filter((item) => item.id !== deleteButton.dataset.deleteBudgetId);
+    persistBudgets("Budget removed");
+    render();
+  }
+}
+
+function handleBudgetMonthChange() {
+  state.budgetMonth = els.budgetMonthSelector.value;
+  renderBudgetPerformance();
+}
+
+function getEffectiveBudget(monthKey) {
+  let effective = null;
+  for (const budget of state.budgets) {
+    if (budget.startMonth <= monthKey) {
+      effective = budget;
+    }
+  }
+  return effective;
+}
+
+function getBudgetMonthOptions() {
+  const months = new Set([...getAvailableMonths(), ...state.budgets.map((budget) => budget.startMonth)]);
+  return Array.from(months).sort((a, b) => b.localeCompare(a));
+}
+
+function getMonthCategorySpend(monthKey) {
+  const spend = {};
+  state.transactions.forEach((transaction) => {
+    if (transaction.flowType !== "charge" || getTransactionMonthKey(transaction) !== monthKey) {
+      return;
+    }
+    spend[transaction.category] = (spend[transaction.category] || 0) + Math.abs(transaction.amount);
+  });
+  return spend;
+}
+
+function getMonthIncomeActual(monthKey) {
+  return sumAmounts(
+    state.transactions
+      .filter((transaction) => {
+        if (getTransactionMonthKey(transaction) !== monthKey) {
+          return false;
+        }
+        if (transaction.category === "Income") {
+          return true;
+        }
+        return transaction.category === "E-Transfer" && transaction.flowType === "credit";
+      })
+      .map((transaction) => Math.abs(transaction.amount))
+  );
+}
+
+function renderBudgetVersionList() {
+  if (!state.budgets.length) {
+    els.budgetVersionList.className = "stack-list empty-state";
+    els.budgetVersionList.textContent = "No budgets saved yet.";
+    return;
+  }
+
+  els.budgetVersionList.className = "stack-list";
+  els.budgetVersionList.innerHTML = [...state.budgets]
+    .sort((a, b) => b.startMonth.localeCompare(a.startMonth))
+    .map((budget) => {
+      const total = sumAmounts(budgetableCategories.map((category) => budget.amounts[category] || 0));
+      const incomeGoal = budget.amounts.Income || 0;
+      return `
+        <article class="budget-version-card">
+          <div class="budget-version-meta">
+            <h3>Effective from ${escapeHtml(formatMonthLabel(budget.startMonth))}</h3>
+            <p>Total budgeted ${formatMoney(total)}${incomeGoal ? ` · Income goal ${formatMoney(incomeGoal)}` : ""}</p>
+          </div>
+          <div class="budget-version-actions">
+            <button class="ghost-button compact-button" type="button" data-edit-budget-id="${budget.id}">Edit</button>
+            <button class="danger-button compact-button" type="button" data-delete-budget-id="${budget.id}">Delete</button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderBudgetMonthSelector() {
+  const months = getBudgetMonthOptions();
+  if (!months.length) {
+    els.budgetMonthSelector.innerHTML = "";
+    state.budgetMonth = "";
+    return;
+  }
+
+  if (!state.budgetMonth || !months.includes(state.budgetMonth)) {
+    state.budgetMonth = months[0];
+  }
+
+  els.budgetMonthSelector.innerHTML = months
+    .map((monthKey) => `<option value="${monthKey}">${escapeHtml(formatMonthLabel(monthKey))}</option>`)
+    .join("");
+  els.budgetMonthSelector.value = state.budgetMonth;
+}
+
+function renderBudgetPerformance() {
+  const monthKey = state.budgetMonth;
+  if (!monthKey) {
+    els.budgetPerformance.className = "stack-list empty-state";
+    els.budgetPerformance.textContent = "Set a budget above to see how you're tracking.";
+    return;
+  }
+
+  const budget = getEffectiveBudget(monthKey);
+  const spend = getMonthCategorySpend(monthKey);
+
+  if (!budget) {
+    els.budgetPerformance.className = "stack-list empty-state";
+    els.budgetPerformance.textContent = `No budget was set yet for ${formatMonthLabel(
+      monthKey
+    )}. Save a budget above with a start month on or before this one.`;
+    return;
+  }
+
+  const incomeGoal = budget.amounts.Income || 0;
+  const incomeActual = getMonthIncomeActual(monthKey);
+
+  const rows = budgetableCategories.filter(
+    (category) => (budget.amounts[category] || 0) > 0 || (spend[category] || 0) > 0
+  );
+
+  if (!rows.length && !incomeGoal && !incomeActual) {
+    els.budgetPerformance.className = "stack-list empty-state";
+    els.budgetPerformance.textContent = `No budgeted categories or spending found for ${formatMonthLabel(monthKey)}.`;
+    return;
+  }
+
+  let incomeHtml = "";
+  if (incomeGoal || incomeActual) {
+    const incomePct = incomeGoal > 0 ? Math.min((incomeActual / incomeGoal) * 100, 100) : 100;
+    const metGoal = incomeGoal === 0 || incomeActual >= incomeGoal;
+    const incomeDiff = incomeActual - incomeGoal;
+    incomeHtml = `
+      <div class="budget-row income-row">
+        <div class="budget-row-header">
+          <h4>Income</h4>
+          <span class="budget-row-amounts ${!metGoal ? "budget-status-over" : ""}">
+            ${formatMoney(incomeActual)} of ${formatMoney(incomeGoal)} goal
+            ${incomeGoal > 0 ? `· ${incomeDiff >= 0 ? formatMoney(incomeDiff) + " above goal" : formatMoney(Math.abs(incomeDiff)) + " short of goal"}` : ""}
+          </span>
+        </div>
+        <div class="budget-progress-track">
+          <div class="budget-progress-fill ${!metGoal ? "over-budget" : ""}" style="width:${incomePct}%;"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  let totalBudgeted = 0;
+  let totalSpent = 0;
+
+  const rowsHtml = rows
+    .map((category) => {
+      const budgeted = budget.amounts[category] || 0;
+      const spent = spend[category] || 0;
+      totalBudgeted += budgeted;
+      totalSpent += spent;
+      const pct = budgeted > 0 ? Math.min((spent / budgeted) * 100, 100) : 100;
+      const isOver = budgeted > 0 && spent > budgeted;
+      const remaining = budgeted - spent;
+      const noBudgetSet = budgeted === 0;
+      return `
+        <div class="budget-row ${noBudgetSet ? "no-budget-set" : ""}">
+          <div class="budget-row-header">
+            <h4>${escapeHtml(category)}</h4>
+            <span class="budget-row-amounts ${isOver ? "budget-status-over" : ""}">
+              ${formatMoney(spent)} of ${formatMoney(budgeted)}
+              ${budgeted > 0 ? `· ${remaining >= 0 ? formatMoney(remaining) + " left" : formatMoney(Math.abs(remaining)) + " over"}` : ""}
+            </span>
+          </div>
+          <div class="budget-progress-track">
+            <div class="budget-progress-fill ${isOver ? "over-budget" : ""}" style="width:${pct}%;"></div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  const overallRemaining = totalBudgeted - totalSpent;
+  const summaryHtml = rows.length
+    ? `
+      <div class="budget-summary-row">
+        <span>Total: ${formatMoney(totalSpent)} of ${formatMoney(totalBudgeted)}</span>
+        <span class="${overallRemaining < 0 ? "budget-status-over" : ""}">
+          ${overallRemaining >= 0 ? formatMoney(overallRemaining) + " left" : formatMoney(Math.abs(overallRemaining)) + " over"}
+        </span>
+      </div>
+    `
+    : "";
+
+  els.budgetPerformance.className = "stack-list";
+  els.budgetPerformance.innerHTML = `${incomeHtml}${rowsHtml}${summaryHtml}`;
+}
+
 function sumAmounts(values) {
   return values.reduce((sum, value) => sum + value, 0);
 }
@@ -2241,6 +2638,34 @@ function persistStatements(toastMessage = "Saved to this browser") {
   }
 }
 
+function hydrateBudgetsFromStorage() {
+  try {
+    const saved = localStorage.getItem(BUDGETS_STORAGE_KEY);
+    if (!saved) {
+      return;
+    }
+    const parsed = JSON.parse(saved);
+    if (!Array.isArray(parsed)) {
+      return;
+    }
+    state.budgets = parsed.sort((a, b) => a.startMonth.localeCompare(b.startMonth));
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function persistBudgets(toastMessage) {
+  try {
+    localStorage.setItem(BUDGETS_STORAGE_KEY, JSON.stringify(state.budgets));
+    if (toastMessage) {
+      showToast(toastMessage);
+    }
+  } catch (error) {
+    console.error(error);
+    showToast("Storage full — budget wasn't saved", "error");
+  }
+}
+
 function buildStatementKey(statement) {
   return [
     statement.fileName,
@@ -2280,14 +2705,6 @@ function buildArchivedStatementPayload(statement) {
 
 function isReviewingDraft() {
   return state.draftStatements.length > 0;
-}
-
-function getCurrentStatements() {
-  return isReviewingDraft() ? state.draftStatements : state.statements;
-}
-
-function getCurrentTransactions() {
-  return isReviewingDraft() ? state.draftTransactions : state.transactions;
 }
 
 function getReviewStatements() {
@@ -2545,7 +2962,7 @@ function getVisibleTransactions() {
 }
 
 function findStatementForTransaction(transaction) {
-  return getCurrentStatements().find(
+  return [...state.statements, ...state.draftStatements].find(
     (statement) =>
       statement.fileName === transaction.fileName &&
       statement.statementPeriod === transaction.statementPeriod &&

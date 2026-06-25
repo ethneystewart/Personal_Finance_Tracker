@@ -269,18 +269,84 @@
         </section>
 
         <section id="budgetPage" class="page-section hidden">
-          <article class="glass-card section-card">
-            <div class="card-heading">
-              <div>
-                <p class="section-tag">Budget</p>
-                <h2>Budget and performance</h2>
+          <section class="content-grid">
+            <article class="glass-card section-card">
+              <div class="card-heading">
+                <div>
+                  <p class="section-tag">Budget</p>
+                  <h2>Budget settings</h2>
+                </div>
               </div>
-            </div>
-            <div class="empty-state">
-              Budget tracking will live here next, including how well you did
-              against your targets each month.
-            </div>
-          </article>
+              <p class="muted">
+                Set how much you want to spend per category and the month it
+                should start applying from. Saving a budget for a month that
+                already has one updates it instead of adding a duplicate.
+              </p>
+              <div class="field-group budget-start-field">
+                <label for="budgetStartMonth">Starts from</label>
+                <input id="budgetStartMonth" type="month" class="filter-input" />
+              </div>
+              <h3 class="budget-section-heading">Income target</h3>
+              <div class="budget-category-grid budget-income-grid">
+                <div class="budget-category-field">
+                  <label for="budgetIncomeGoal">
+                    <span class="swatch" style="background:#2d8a63"></span>
+                    Monthly income goal
+                  </label>
+                  <input id="budgetIncomeGoal" type="number" min="0" step="1" placeholder="0" />
+                </div>
+              </div>
+              <h3 class="budget-section-heading">Spending limits</h3>
+              <div id="budgetCategoryInputs" class="budget-category-grid"></div>
+              <div class="entry-actions">
+                <button id="clearBudgetFormButton" class="ghost-button" type="button">Clear form</button>
+                <button id="saveBudgetButton" class="secondary-button" type="button">Save budget</button>
+              </div>
+            </article>
+
+            <article class="glass-card chart-card">
+              <div class="card-heading">
+                <div>
+                  <p class="section-tag">Live preview</p>
+                  <h2>Where your income goes</h2>
+                </div>
+              </div>
+              <p class="muted budget-allocation-note">
+                Updates as you type. Shows how much of your monthly income
+                goal each category would use.
+              </p>
+              <div id="budgetAllocationChart" class="chart-area empty-state">
+                Enter a monthly income goal and some category amounts to see
+                the breakdown.
+              </div>
+            </article>
+
+            <article class="glass-card section-card">
+              <div class="card-heading">
+                <div>
+                  <p class="section-tag">History</p>
+                  <h2>Saved budgets</h2>
+                </div>
+              </div>
+              <div id="budgetVersionList" class="stack-list empty-state">
+                No budgets saved yet.
+              </div>
+            </article>
+
+            <article class="glass-card section-card full-width">
+              <div class="card-heading">
+                <div>
+                  <p class="section-tag">Performance</p>
+                  <h2>Budget vs actual</h2>
+                </div>
+                <select id="budgetMonthSelector" class="category-select" aria-label="Select month to review">
+                </select>
+              </div>
+              <div id="budgetPerformance" class="stack-list empty-state">
+                Set a budget above to see how you're tracking.
+              </div>
+            </article>
+          </section>
         </section>
       </main>
     </div>
