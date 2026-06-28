@@ -11,20 +11,24 @@ const state = {
   draftFiles: [],
   selectedTransactionIds: [],
   activeStatementKey: "all",
+  editingStatementId: null,
   activeView: "all-data",
   pendingStatementKind: null,
-  activeMonth: "",
+  viewScope: "month",
+  activeMonth: getCurrentMonthKey(),
+  activeYear: String(new Date().getFullYear()),
   filters: {
     search: "",
     category: "",
     flow: "",
   },
   timelineFilters: {
-    category: "",
-    account: "",
+    categories: [],
+    accounts: [],
     granularity: "day",
-    fromDate: "",
-    toDate: "",
+    openDropdown: null,
+    selectedBucketKey: null,
+    ...getCurrentMonthRange(),
   },
   budgets: [],
   budgetMonth: "",
@@ -70,7 +74,8 @@ const els = {
   searchFilter: document.querySelector("#searchFilter"),
   categoryFilter: document.querySelector("#categoryFilter"),
   flowFilter: document.querySelector("#flowFilter"),
-  monthSelector: document.querySelector("#monthSelector"),
+  periodSelector: document.querySelector("#periodSelector"),
+  periodScopeToggle: document.querySelector("#periodScopeToggle"),
   toast: document.querySelector("#toast"),
   timelineGranularityToggle: document.querySelector("#timelineGranularityToggle"),
   timelineCategoryFilter: document.querySelector("#timelineCategoryFilter"),
@@ -78,6 +83,7 @@ const els = {
   timelineFromDate: document.querySelector("#timelineFromDate"),
   timelineToDate: document.querySelector("#timelineToDate"),
   timelineFilterClear: document.querySelector("#timelineFilterClear"),
+  timelineDayDetail: document.querySelector("#timelineDayDetail"),
   budgetStartMonth: document.querySelector("#budgetStartMonth"),
   budgetCategoryInputs: document.querySelector("#budgetCategoryInputs"),
   budgetIncomeGoal: document.querySelector("#budgetIncomeGoal"),
@@ -92,6 +98,8 @@ const els = {
   spendingTotal: document.querySelector("#spendingTotal"),
   netTotal: document.querySelector("#netTotal"),
   statementSections: document.querySelector("#statementSections"),
+  manageStatementsList: document.querySelector("#manageStatementsList"),
+  incomeGoalCard: document.querySelector("#incomeGoalCard"),
   flowChart: document.querySelector("#flowChart"),
   categoryChart: document.querySelector("#categoryChart"),
   balanceChart: document.querySelector("#balanceChart"),
@@ -103,56 +111,51 @@ const els = {
 const categoryRules = [
   { name: "Rent & Utilities", keywords: ["rent", "mortgage", "property", "hydro", "electric", "water", "internet", "phone", "utility"] },
   { name: "Groceries", keywords: ["grocery", "freshco", "metro", "loblaws", "no frills", "superstore", "sobeys", "walmart", "costco"] },
-  { name: "Entertainment & Going Out", keywords: ["restaurant", "cafe", "coffee", "starbucks", "tim hortons", "ubereats", "doordash", "skip", "bar", "pub", "netflix", "spotify", "cineplex"] },
-  { name: "Transportation & Car", keywords: ["uber", "lyft", "shell", "esso", "petro", "transit", "parking", "presto", "gas", "insurance", "garage"] },
+  { name: "Food & Alcohol", keywords: ["restaurant", "cafe", "coffee", "starbucks", "tim hortons", "ubereats", "doordash", "skip", "bar", "pub"] },
+  { name: "Entertainment", keywords: ["netflix", "spotify", "cineplex", "movie", "theatre", "concert"] },
+  { name: "Transportation", keywords: ["uber", "lyft", "shell", "esso", "petro", "transit", "parking", "presto", "gas", "insurance", "garage"] },
   { name: "Travel", keywords: ["air canada", "westjet", "hotel", "airbnb", "booking", "expedia", "flight", "trip"] },
-  { name: "Shopping & Beauty", keywords: ["amazon", "shop", "store", "sephora", "indigo", "ikea", "marketplace", "beauty", "ulta"] },
-  { name: "Income", keywords: ["payroll", "salary", "deposit", "refund", "interest"] },
-  { name: "Fees", keywords: ["fee", "charge", "service"] },
-  { name: "Cash", keywords: ["atm", "cash withdrawal"] },
+  { name: "Shopping - Clothes & Beauty", keywords: ["sephora", "ulta", "beauty", "clothing", "apparel", "fashion", "cosmetics"] },
+  { name: "Shopping - Misc", keywords: ["amazon", "shop", "store", "indigo", "ikea", "marketplace"] },
+  { name: "Income", keywords: ["payroll", "salary", "deposit", "interest"] },
 ];
 
 const debitOnlyCategoryRules = [
   { name: "Credit Card Payment", keywords: ["mastercard", "visa preauth", "visa payment", "amex", "credit card payment", "cc payment", "mc preauth", "card payment"] },
-  { name: "E-Transfer", keywords: ["etransfer", "e-transfer", "interac", "email money transfer", "send money"] },
   { name: "Savings", keywords: ["savings transfer", "to savings", "from savings", "tfsa", "rrsp", "investment transfer"] },
 ];
 
 const categoryColorMap = {
   "Rent & Utilities": { solid: "#7f95ff", soft: "rgba(127, 149, 255, 0.14)", border: "rgba(127, 149, 255, 0.3)" },
-  "Entertainment & Going Out": { solid: "#ff8db1", soft: "rgba(255, 141, 177, 0.14)", border: "rgba(255, 141, 177, 0.3)" },
-  "Transportation & Car": { solid: "#ffb36c", soft: "rgba(255, 179, 108, 0.16)", border: "rgba(255, 179, 108, 0.3)" },
+  "Food & Alcohol": { solid: "#ff8db1", soft: "rgba(255, 141, 177, 0.14)", border: "rgba(255, 141, 177, 0.3)" },
+  Entertainment: { solid: "#9b7fe8", soft: "rgba(155, 127, 232, 0.16)", border: "rgba(155, 127, 232, 0.3)" },
+  Transportation: { solid: "#ffb36c", soft: "rgba(255, 179, 108, 0.16)", border: "rgba(255, 179, 108, 0.3)" },
   Travel: { solid: "#6f84f7", soft: "rgba(111, 132, 247, 0.14)", border: "rgba(111, 132, 247, 0.3)" },
-  "Shopping & Beauty": { solid: "#b457b8", soft: "rgba(180, 87, 184, 0.14)", border: "rgba(180, 87, 184, 0.3)" },
+  "Shopping - Clothes & Beauty": { solid: "#b457b8", soft: "rgba(180, 87, 184, 0.14)", border: "rgba(180, 87, 184, 0.3)" },
+  "Shopping - Misc": { solid: "#f4b942", soft: "rgba(244, 185, 66, 0.16)", border: "rgba(244, 185, 66, 0.3)" },
   Groceries: { solid: "#52c4a8", soft: "rgba(82, 196, 168, 0.16)", border: "rgba(82, 196, 168, 0.3)" },
   Misc: { solid: "#7ec8f4", soft: "rgba(126, 200, 244, 0.16)", border: "rgba(126, 200, 244, 0.3)" },
   Undecided: { solid: "#9f8baa", soft: "rgba(159, 139, 170, 0.14)", border: "rgba(159, 139, 170, 0.28)" },
   Income: { solid: "#2d8a63", soft: "rgba(45, 138, 99, 0.14)", border: "rgba(45, 138, 99, 0.28)" },
-  Credits: { solid: "#88d5b5", soft: "rgba(136, 213, 181, 0.16)", border: "rgba(136, 213, 181, 0.3)" },
-  Fees: { solid: "#d95b7a", soft: "rgba(217, 91, 122, 0.14)", border: "rgba(217, 91, 122, 0.28)" },
-  Cash: { solid: "#8e8aa8", soft: "rgba(142, 138, 168, 0.14)", border: "rgba(142, 138, 168, 0.28)" },
-  "E-Transfer": { solid: "#f4b942", soft: "rgba(244, 185, 66, 0.16)", border: "rgba(244, 185, 66, 0.3)" },
   "Credit Card Payment": { solid: "#6c5ce7", soft: "rgba(108, 92, 231, 0.14)", border: "rgba(108, 92, 231, 0.3)" },
   Savings: { solid: "#3fc1c9", soft: "rgba(63, 193, 201, 0.16)", border: "rgba(63, 193, 201, 0.3)" },
 };
 const categoryOptions = [
-  "Rent & Utilities",
-  "Entertainment & Going Out",
-  "Transportation & Car",
-  "Travel",
-  "Shopping & Beauty",
+  "Shopping - Clothes & Beauty",
+  "Shopping - Misc",
+  "Food & Alcohol",
+  "Entertainment",
   "Groceries",
-  "Misc",
-  "Undecided",
-  "Income",
-  "Credits",
-  "Fees",
-  "Cash",
-  "E-Transfer",
+  "Transportation",
   "Credit Card Payment",
+  "Misc",
+  "Travel",
+  "Income",
   "Savings",
+  "Rent & Utilities",
+  "Undecided",
 ];
-const budgetExcludedCategories = ["Income", "Credits", "Cash", "Credit Card Payment", "E-Transfer"];
+const budgetExcludedCategories = ["Income", "Credit Card Payment"];
 const budgetableCategories = categoryOptions.filter(
   (category) => !budgetExcludedCategories.includes(category)
 );
@@ -206,17 +209,26 @@ function init() {
   els.applyCategoryButton.addEventListener("click", applyBulkCategory);
   els.deleteSelectedButton.addEventListener("click", deleteSelectedTransactions);
   els.transactionTable.addEventListener("click", handleTransactionTableClick);
+  els.manageStatementsList.addEventListener("click", handleManageStatementsClick);
+  els.manageStatementsList.addEventListener("change", handleManageStatementsChange);
+  els.incomeGoalCard.addEventListener("change", handleIncomeGoalInputChange);
   els.transactionTabs.addEventListener("click", handleTransactionTabClick);
   els.searchFilter.addEventListener("input", handleFilterInput);
   els.categoryFilter.addEventListener("change", handleFilterInput);
   els.flowFilter.addEventListener("change", handleFilterInput);
-  els.monthSelector.addEventListener("change", handleMonthSelectorChange);
+  els.periodSelector.addEventListener("change", handlePeriodSelectorChange);
+  els.periodScopeToggle.addEventListener("click", handlePeriodScopeToggleClick);
   els.timelineGranularityToggle.addEventListener("click", handleTimelineGranularityClick);
-  els.timelineCategoryFilter.addEventListener("change", handleTimelineFilterChange);
-  els.timelineAccountFilter.addEventListener("change", handleTimelineFilterChange);
+  els.timelineCategoryFilter.addEventListener("click", handleMultiSelectFilterClick);
+  els.timelineCategoryFilter.addEventListener("change", handleMultiSelectFilterChange);
+  els.timelineAccountFilter.addEventListener("click", handleMultiSelectFilterClick);
+  els.timelineAccountFilter.addEventListener("change", handleMultiSelectFilterChange);
+  document.addEventListener("click", handleDocumentClickForDropdowns);
   els.timelineFromDate.addEventListener("change", handleTimelineFilterChange);
   els.timelineToDate.addEventListener("change", handleTimelineFilterChange);
   els.timelineFilterClear.addEventListener("click", handleTimelineFilterClear);
+  els.timelineChart.addEventListener("click", handleTimelineChartClick);
+  els.timelineDayDetail.addEventListener("click", handleTimelineDayDetailClick);
   els.saveBudgetButton.addEventListener("click", handleSaveBudget);
   els.clearBudgetFormButton.addEventListener("click", handleClearBudgetForm);
   els.budgetVersionList.addEventListener("click", handleBudgetVersionListClick);
@@ -806,12 +818,11 @@ function isCreditCardStructuralLine(line) {
 
 function categorizeTransaction(description, amount, statementKind) {
   const lower = description.toLowerCase();
-  if (
-    /(payment\s*[-–—/]*\s*thank\s*you|refund|merchant credit|return|reversal|adjustment|cash back|cashback|credit voucher)/i.test(
-      lower
-    )
-  ) {
-    return "Credits";
+  if (/payment\s*[-–—/]*\s*thank\s*you/i.test(lower)) {
+    return "Credit Card Payment";
+  }
+  if (/(refund|merchant credit|return|reversal|adjustment|cash back|cashback|credit voucher)/i.test(lower)) {
+    return "Income";
   }
   if (statementKind !== "credit-card") {
     for (const rule of debitOnlyCategoryRules) {
@@ -825,7 +836,7 @@ function categorizeTransaction(description, amount, statementKind) {
       if (statementKind === "credit-card") {
         return rule.name;
       }
-      return amount > 0 && rule.name !== "Fees" ? "Income" : rule.name;
+      return amount > 0 ? "Income" : rule.name;
     }
   }
 
@@ -846,7 +857,9 @@ function render() {
   renderView();
   renderMonthSelector();
   renderOverview();
+  renderIncomeGoalCard();
   renderStatements();
+  renderManageStatements();
   renderFlowChart();
   renderCategoryChart();
   renderBalanceChart();
@@ -949,7 +962,8 @@ function renderOverview() {
   );
   const netChange = inflow - outflow;
 
-  els.statementCount.textContent = state.activeMonth
+  const isPeriodFiltered = state.viewScope === "year" ? Boolean(state.activeYear) : Boolean(state.activeMonth);
+  els.statementCount.textContent = isPeriodFiltered
     ? String(new Set(transactions.map((transaction) => transaction.fileName)).size)
     : String(state.statements.length);
   els.incomeTotal.previousElementSibling.textContent = "Total money in";
@@ -959,6 +973,72 @@ function renderOverview() {
   els.spendingTotal.textContent = formatMoney(outflow);
   els.netTotal.textContent = formatMoney(netChange);
   els.netTotal.className = netChange < 0 ? "amount-negative" : "amount-positive";
+}
+
+function renderIncomeGoalCard() {
+  const monthKey = state.viewScope === "month" ? state.activeMonth : "";
+  if (!monthKey) {
+    els.incomeGoalCard.classList.add("hidden");
+    els.incomeGoalCard.innerHTML = "";
+    return;
+  }
+
+  const budget = getEffectiveBudget(monthKey);
+  const incomeGoal = budget?.amounts?.Income || 0;
+  const spend = sumAmounts(
+    getMonthFilteredTransactions()
+      .filter((transaction) => transaction.flowType === "charge")
+      .map((transaction) => Math.abs(transaction.amount))
+  );
+  const pct = incomeGoal > 0 ? Math.min((spend / incomeGoal) * 100, 100) : 0;
+  const isOver = incomeGoal > 0 && spend > incomeGoal;
+  const remaining = incomeGoal - spend;
+
+  els.incomeGoalCard.classList.remove("hidden");
+  els.incomeGoalCard.innerHTML = `
+    <div class="card-heading">
+      <div>
+        <p class="section-tag">Budget check</p>
+        <h2>${escapeHtml(formatMonthLabel(monthKey))} income vs. spending</h2>
+      </div>
+      <div class="income-goal-input-group">
+        <label for="incomeGoalInput">Expected income</label>
+        <input id="incomeGoalInput" type="number" min="0" step="0.01" class="filter-input" value="${incomeGoal || ""}" placeholder="0.00" />
+      </div>
+    </div>
+    ${
+      incomeGoal > 0
+        ? `
+          <div class="budget-progress-track">
+            <div class="budget-progress-fill ${isOver ? "over-budget" : ""}" style="width:${pct}%;"></div>
+          </div>
+          <p class="${isOver ? "budget-allocation-warning" : "muted"}">
+            ${formatMoney(spend)} spent of ${formatMoney(incomeGoal)} expected
+            ${isOver ? `· ${formatMoney(Math.abs(remaining))} over your expected income` : `· ${formatMoney(remaining)} left`}
+          </p>
+        `
+        : `<p class="muted">Set your expected income for ${escapeHtml(formatMonthLabel(monthKey))} to track overspending.</p>`
+    }
+  `;
+}
+
+function handleIncomeGoalInputChange(event) {
+  const input = event.target.closest("#incomeGoalInput");
+  if (!input) {
+    return;
+  }
+  const monthKey = state.activeMonth;
+  const value = Math.max(Number(input.value) || 0, 0);
+  let budget = state.budgets.find((item) => item.startMonth === monthKey);
+  if (!budget) {
+    const inherited = getEffectiveBudget(monthKey);
+    budget = { id: crypto.randomUUID(), startMonth: monthKey, amounts: { ...(inherited?.amounts || {}) } };
+    state.budgets.push(budget);
+    state.budgets.sort((a, b) => a.startMonth.localeCompare(b.startMonth));
+  }
+  budget.amounts.Income = value;
+  persistBudgets();
+  render();
 }
 
 function renderView() {
@@ -996,7 +1076,7 @@ function renderStatements() {
       const items = grouped[monthKey];
       const inflow = sumAmounts(items.filter((tx) => tx.flowType === "credit").map((tx) => Math.abs(tx.amount)));
       const outflow = sumAmounts(items.filter((tx) => tx.flowType === "charge").map((tx) => Math.abs(tx.amount)));
-      const fees = sumAmounts(items.filter((tx) => tx.category === "Fees").map((tx) => Math.abs(tx.amount)));
+      const savings = sumAmounts(items.filter((tx) => tx.category === "Savings").map((tx) => Math.abs(tx.amount)));
       const statementLabels = Array.from(
         new Set(
           items.map((tx) => {
@@ -1015,13 +1095,258 @@ function renderStatements() {
             <span class="chip">Money in ${formatMoney(inflow)}</span>
             <span class="chip">Money out ${formatMoney(outflow)}</span>
             <span class="chip">Net ${formatMoney(inflow - outflow)}</span>
-            <span class="chip">Fees ${formatMoney(fees)}</span>
+            <span class="chip">Savings ${formatMoney(savings)}</span>
             <span class="chip">${items.length} transactions</span>
           </div>
         </article>
       `;
     })
     .join("");
+}
+
+function getScopedStatements() {
+  const isPeriodFiltered = state.viewScope === "year" ? Boolean(state.activeYear) : Boolean(state.activeMonth);
+  if (!isPeriodFiltered) {
+    return state.statements;
+  }
+  const statementIds = new Set(
+    getMonthFilteredTransactions()
+      .map((tx) => findStatementForTransaction(tx)?.id)
+      .filter(Boolean)
+  );
+  return state.statements.filter((statement) => statementIds.has(statement.id));
+}
+
+function renderManageStatements() {
+  const scopedStatements = getScopedStatements();
+  if (!state.statements.length) {
+    els.manageStatementsList.className = "stack-list empty-state";
+    els.manageStatementsList.textContent = "Upload credit card or debit statements to manage them here.";
+    return;
+  }
+  if (!scopedStatements.length) {
+    els.manageStatementsList.className = "stack-list empty-state";
+    els.manageStatementsList.textContent = "No statements in this period. Switch the period above or choose \"All\" to see everything.";
+    return;
+  }
+
+  els.manageStatementsList.className = "stack-list";
+  els.manageStatementsList.innerHTML = [...scopedStatements]
+    .sort(sortByPeriod)
+    .reverse()
+    .map((statement) => {
+      const isEditing = state.editingStatementId === statement.id;
+      const transactions = statement.transactions || [];
+      return `
+        <article class="statement-card">
+          <div class="card-heading">
+            <div>
+              <h3>${escapeHtml(statement.cardLabel || statement.fileName)}</h3>
+              <p class="muted">${escapeHtml(statement.statementPeriod || "")} · ${transactions.length} transaction${transactions.length === 1 ? "" : "s"}</p>
+            </div>
+            <div class="statement-meta">
+              <button type="button" class="ghost-button compact-button" data-toggle-edit-statement="${escapeHtml(statement.id)}">
+                ${isEditing ? "Done editing" : "Edit"}
+              </button>
+              <button type="button" class="danger-button compact-button" data-delete-statement="${escapeHtml(statement.id)}">
+                Delete statement
+              </button>
+            </div>
+          </div>
+          ${isEditing ? renderEditableStatementTransactions(statement) : ""}
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderEditableStatementTransactions(statement) {
+  const transactions = [...(statement.transactions || [])].sort((a, b) =>
+    (a.isoDate || "").localeCompare(b.isoDate || "")
+  );
+
+  const rows = transactions
+    .map(
+      (tx) => `
+        <tr>
+          <td>
+            <input
+              type="date"
+              class="filter-input"
+              data-statement-id="${escapeHtml(statement.id)}"
+              data-tx-id="${escapeHtml(tx.id)}"
+              data-field="isoDate"
+              value="${escapeHtml(tx.isoDate || "")}"
+            />
+          </td>
+          <td>
+            <input
+              type="text"
+              class="filter-input"
+              data-statement-id="${escapeHtml(statement.id)}"
+              data-tx-id="${escapeHtml(tx.id)}"
+              data-field="description"
+              value="${escapeHtml(tx.description || "")}"
+            />
+          </td>
+          <td>${renderCategorySelectForEdit(statement.id, tx)}</td>
+          <td>
+            <select class="category-select" data-statement-id="${escapeHtml(statement.id)}" data-tx-id="${escapeHtml(tx.id)}" data-field="flowType">
+              <option value="charge" ${tx.flowType === "charge" ? "selected" : ""}>Money out</option>
+              <option value="credit" ${tx.flowType === "credit" ? "selected" : ""}>Money in</option>
+            </select>
+          </td>
+          <td>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              class="filter-input"
+              data-statement-id="${escapeHtml(statement.id)}"
+              data-tx-id="${escapeHtml(tx.id)}"
+              data-field="amount"
+              value="${Math.abs(tx.amount ?? 0)}"
+            />
+          </td>
+          <td>
+            <button
+              type="button"
+              class="delete-transaction-button"
+              data-delete-edit-tx="${escapeHtml(tx.id)}"
+              data-statement-id="${escapeHtml(statement.id)}"
+              title="Delete transaction"
+              aria-label="Delete transaction"
+            >✕</button>
+          </td>
+        </tr>
+      `
+    )
+    .join("");
+
+  return `
+    <div class="table-wrap edit-statement-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Description</th>
+            <th>Category</th>
+            <th>Flow</th>
+            <th>Amount</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderCategorySelectForEdit(statementId, tx) {
+  const options = categoryOptions
+    .map(
+      (category) =>
+        `<option value="${escapeHtml(category)}" ${tx.category === category ? "selected" : ""}>${escapeHtml(category)}</option>`
+    )
+    .join("");
+  return `<select class="category-select" data-statement-id="${escapeHtml(statementId)}" data-tx-id="${escapeHtml(tx.id)}" data-field="category">${options}</select>`;
+}
+
+function recalculateStatementTotals(statement) {
+  statement.totalCredits = sumAmounts(
+    (statement.transactions || []).filter((tx) => tx.flowType === "credit").map((tx) => Math.abs(tx.amount))
+  );
+  statement.totalCharges = sumAmounts(
+    (statement.transactions || []).filter((tx) => tx.flowType === "charge").map((tx) => Math.abs(tx.amount))
+  );
+  statement.serviceFees = sumAmounts(
+    (statement.transactions || []).filter((tx) => tx.category === "Fees").map((tx) => Math.abs(tx.amount))
+  );
+}
+
+function formatDateLabelFromIso(isoDate) {
+  if (!isoDate) {
+    return "";
+  }
+  const date = new Date(`${isoDate}T12:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return isoDate;
+  }
+  return date.toLocaleDateString("en-CA", { month: "short", day: "2-digit" });
+}
+
+function handleManageStatementsClick(event) {
+  const toggleButton = event.target.closest("[data-toggle-edit-statement]");
+  if (toggleButton) {
+    const id = toggleButton.dataset.toggleEditStatement;
+    state.editingStatementId = state.editingStatementId === id ? null : id;
+    render();
+    return;
+  }
+
+  const deleteStatementButton = event.target.closest("[data-delete-statement]");
+  if (deleteStatementButton) {
+    const id = deleteStatementButton.dataset.deleteStatement;
+    const statement = state.statements.find((item) => item.id === id);
+    if (!statement) {
+      return;
+    }
+    const label = statement.cardLabel || statement.fileName;
+    if (!confirm(`Delete the statement "${label}" and all ${statement.transactions.length} of its transactions?`)) {
+      return;
+    }
+    state.statements = state.statements.filter((item) => item.id !== id);
+    state.transactions = state.statements.flatMap((item) => item.transactions || []);
+    if (state.editingStatementId === id) {
+      state.editingStatementId = null;
+    }
+    persistStatements();
+    setStatus(`Deleted statement ${label}.`);
+    render();
+    return;
+  }
+
+  const deleteTxButton = event.target.closest("[data-delete-edit-tx]");
+  if (deleteTxButton) {
+    const statementId = deleteTxButton.dataset.statementId;
+    const txId = deleteTxButton.dataset.deleteEditTx;
+    const statement = state.statements.find((item) => item.id === statementId);
+    if (!statement) {
+      return;
+    }
+    statement.transactions = (statement.transactions || []).filter((tx) => tx.id !== txId);
+    recalculateStatementTotals(statement);
+    state.transactions = state.statements.flatMap((item) => item.transactions || []);
+    persistStatements();
+    setStatus("Deleted transaction.");
+    render();
+  }
+}
+
+function handleManageStatementsChange(event) {
+  const field = event.target.dataset.field;
+  if (!field) {
+    return;
+  }
+  const statement = state.statements.find((item) => item.id === event.target.dataset.statementId);
+  const transaction = statement?.transactions.find((tx) => tx.id === event.target.dataset.txId);
+  if (!statement || !transaction) {
+    return;
+  }
+
+  if (field === "amount") {
+    transaction.amount = Math.abs(parseFloat(event.target.value) || 0);
+  } else if (field === "isoDate") {
+    transaction.isoDate = event.target.value;
+    transaction.dateLabel = formatDateLabelFromIso(event.target.value);
+  } else {
+    transaction[field] = event.target.value;
+  }
+
+  recalculateStatementTotals(statement);
+  state.transactions = state.statements.flatMap((item) => item.transactions || []);
+  persistStatements();
+  render();
 }
 
 function renderFlowChart() {
@@ -1034,7 +1359,7 @@ function renderFlowChart() {
   const series = [
     { label: "Money in", value: sumAmounts(transactions.filter((item) => item.flowType === "credit").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #88d5b5, #52c4a8)" },
     { label: "Money out", value: sumAmounts(transactions.filter((item) => item.flowType === "charge").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #ff8db1, #d95b7a)" },
-    { label: "Fees", value: sumAmounts(transactions.filter((item) => item.category === "Fees").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #ffb36c, #f58d47)" },
+    { label: "Savings", value: sumAmounts(transactions.filter((item) => item.category === "Savings").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #3fc1c9, #2a9aa0)" },
   ];
 
   const max = Math.max(...series.map((item) => item.value), 1);
@@ -1114,14 +1439,15 @@ function renderCategoryChart() {
 }
 
 function renderBalanceChart() {
-  if (!state.statements.length) {
+  const debitStatements = state.statements.filter((statement) => statement.statementKind !== "credit-card");
+  if (!debitStatements.length) {
     setEmpty(els.balanceChart, "Closing balances will be graphed here.");
     return;
   }
 
-  const points = state.statements.map((statement, index) => {
+  const points = debitStatements.map((statement, index) => {
     const dateLabel = compactLabel(statement.statementPeriod, statement.cardLabel || statement.fileName);
-    const accountHint = statement.accountNumber || (statement.statementKind === "credit-card" ? "Credit card" : "Bank");
+    const accountHint = statement.accountNumber || "Bank";
     return {
       label: `${dateLabel} · ${accountHint}`,
       value: statement.closingBalance,
@@ -1181,8 +1507,20 @@ function renderCreditCardSpendChart() {
 
 function getTimelineBaseTransactions() {
   return getMonthFilteredTransactions().filter(
-    (tx) => tx.flowType === "charge" && findSubmittedStatementKind(tx) === "credit-card"
+    (tx) => tx.flowType === "charge" && tx.category !== "Credit Card Payment"
   );
+}
+
+function getCurrentMonthRange() {
+  const now = new Date();
+  const fromDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+  const toDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+  return { fromDate, toDate };
+}
+
+function getCurrentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function getWeekStartKey(isoDate) {
@@ -1226,6 +1564,35 @@ function getTimelineAccountKey(statement) {
     : `file:${statement.fileName}`;
 }
 
+function renderMultiSelectFilter(wrapperEl, dropdownKey, options, selectedValues, allLabel) {
+  const button = wrapperEl.querySelector(".multi-select-button");
+  const menu = wrapperEl.querySelector(".multi-select-menu");
+  const isOpen = state.timelineFilters.openDropdown === dropdownKey;
+
+  button.textContent = selectedValues.length
+    ? options
+        .filter((option) => selectedValues.includes(option.value))
+        .map((option) => option.label)
+        .join(", ")
+    : allLabel;
+
+  menu.classList.toggle("hidden", !isOpen);
+  menu.innerHTML =
+    options
+      .map(
+        (option) => `
+          <label class="multi-select-option">
+            <input type="checkbox" data-dropdown="${dropdownKey}" value="${escapeHtml(option.value)}" ${selectedValues.includes(option.value) ? "checked" : ""} />
+            <span>${escapeHtml(option.label)}</span>
+          </label>
+        `
+      )
+      .join("") +
+    (selectedValues.length
+      ? `<div class="multi-select-option multi-select-option-clear" data-clear-dropdown="${dropdownKey}">Clear selection</div>`
+      : "");
+}
+
 function renderTimelineFilterControls(baseTransactions) {
   const categoryTotals = {};
   const accountMap = new Map();
@@ -1240,20 +1607,28 @@ function renderTimelineFilterControls(baseTransactions) {
     }
   });
 
-  const categoryOptionsList = Object.keys(categoryTotals).sort((a, b) => categoryTotals[b] - categoryTotals[a]);
-  els.timelineCategoryFilter.innerHTML =
-    `<option value="">All categories</option>` +
-    categoryOptionsList
-      .map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`)
-      .join("");
-  els.timelineCategoryFilter.value = state.timelineFilters.category;
+  const categoryOptionsList = Object.keys(categoryTotals)
+    .sort((a, b) => categoryTotals[b] - categoryTotals[a])
+    .map((category) => ({ value: category, label: category }));
+  renderMultiSelectFilter(
+    els.timelineCategoryFilter,
+    "category",
+    categoryOptionsList,
+    state.timelineFilters.categories,
+    "All categories"
+  );
 
-  els.timelineAccountFilter.innerHTML =
-    `<option value="">All accounts</option>` +
-    Array.from(accountMap.entries())
-      .map(([accountKey, label]) => `<option value="${escapeHtml(accountKey)}">${escapeHtml(label)}</option>`)
-      .join("");
-  els.timelineAccountFilter.value = state.timelineFilters.account;
+  const accountOptionsList = Array.from(accountMap.entries()).map(([accountKey, label]) => ({
+    value: accountKey,
+    label,
+  }));
+  renderMultiSelectFilter(
+    els.timelineAccountFilter,
+    "account",
+    accountOptionsList,
+    state.timelineFilters.accounts,
+    "All accounts"
+  );
 
   els.timelineFromDate.value = state.timelineFilters.fromDate;
   els.timelineToDate.value = state.timelineFilters.toDate;
@@ -1267,12 +1642,12 @@ function renderTimelineChart() {
   const baseTransactions = getTimelineBaseTransactions();
   renderTimelineFilterControls(baseTransactions);
 
-  const { category, account, granularity, fromDate, toDate } = state.timelineFilters;
+  const { categories, accounts, granularity, fromDate, toDate } = state.timelineFilters;
   const transactions = baseTransactions.filter((tx) => {
-    if (category && tx.category !== category) {
+    if (categories.length && !categories.includes(tx.category)) {
       return false;
     }
-    if (account && getTimelineAccountKey(findStatementForTransaction(tx)) !== account) {
+    if (accounts.length && !accounts.includes(getTimelineAccountKey(findStatementForTransaction(tx)))) {
       return false;
     }
     if (fromDate && (tx.isoDate || "") < fromDate) {
@@ -1286,14 +1661,18 @@ function renderTimelineChart() {
 
   if (!transactions.length) {
     setEmpty(els.timelineChart, "No spending matches the current timeline filters.");
+    els.timelineDayDetail.classList.add("hidden");
     return;
   }
 
   const buckets = {};
+  const txByBucket = {};
   transactions.forEach((tx) => {
     const key = getTimelineBucketKey(tx, granularity);
     buckets[key] = buckets[key] || {};
     buckets[key][tx.category] = (buckets[key][tx.category] || 0) + Math.abs(tx.amount);
+    txByBucket[key] = txByBucket[key] || [];
+    txByBucket[key].push(tx);
   });
 
   const days = Object.entries(buckets)
@@ -1321,6 +1700,10 @@ function renderTimelineChart() {
   const peakDay = days.reduce((best, day) => (day.total > best.total ? day : best), days[0]);
   const bucketNoun = granularity === "month" ? "month" : granularity === "week" ? "week" : "day";
 
+  if (state.timelineFilters.selectedBucketKey && !buckets[state.timelineFilters.selectedBucketKey]) {
+    state.timelineFilters.selectedBucketKey = null;
+  }
+
   els.timelineChart.className = "chart-area";
   els.timelineChart.innerHTML = `
     <div class="timeline-stats">
@@ -1346,8 +1729,9 @@ function renderTimelineChart() {
               return `<div class="timeline-segment" style="height:${segmentHeightPct}%; background:${getCategoryColor(cat).solid}; border-radius:${radius};" data-tooltip="${escapeHtml(cat)}: ${formatMoney(amount)} (${shareLabel}% of ${bucketNoun})"></div>`;
             })
             .join("");
+          const isSelected = state.timelineFilters.selectedBucketKey === day.key;
           return `
-            <div class="timeline-bar">
+            <div class="timeline-bar ${isSelected ? "selected" : ""}" data-bucket-key="${escapeHtml(day.key)}" title="Click to see transactions">
               <div class="timeline-value">${formatMoney(day.total)}</div>
               <div class="timeline-visual" style="height:${heightPx}px; display:flex; flex-direction:column;">
                 ${segments}
@@ -1374,6 +1758,73 @@ function renderTimelineChart() {
         .join("")}
     </div>
   `;
+
+  renderTimelineDayDetail(txByBucket, days);
+}
+
+function renderTimelineDayDetail(txByBucket, days) {
+  const selectedKey = state.timelineFilters.selectedBucketKey;
+  if (!selectedKey || !txByBucket[selectedKey]) {
+    els.timelineDayDetail.classList.add("hidden");
+    els.timelineDayDetail.innerHTML = "";
+    return;
+  }
+
+  const day = days.find((item) => item.key === selectedKey);
+  const txs = [...txByBucket[selectedKey]].sort((a, b) => (b.isoDate || "").localeCompare(a.isoDate || ""));
+
+  els.timelineDayDetail.classList.remove("hidden");
+  els.timelineDayDetail.innerHTML = `
+    <div class="day-detail-heading">
+      <h3>${escapeHtml(day.label)} <span class="muted">· ${txs.length} transaction${txs.length === 1 ? "" : "s"} · ${formatMoney(day.total)}</span></h3>
+      <button type="button" class="ghost-button compact-button" data-close-day-detail>Close</button>
+    </div>
+    <div class="table-wrap day-detail-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Description</th>
+            <th>Category</th>
+            <th>Amount</th>
+            <th>Statement</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${txs
+            .map(
+              (tx) => `
+                <tr>
+                  <td>${escapeHtml(tx.dateLabel)}</td>
+                  <td>${escapeHtml(tx.description)}</td>
+                  <td>${renderCategoryBadge(tx.category)}</td>
+                  <td class="amount-negative">${formatMoney(tx.amount)}</td>
+                  <td>${escapeHtml(tx.fileName)}</td>
+                </tr>
+              `
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function handleTimelineChartClick(event) {
+  const bar = event.target.closest("[data-bucket-key]");
+  if (!bar) {
+    return;
+  }
+  const key = bar.dataset.bucketKey;
+  state.timelineFilters.selectedBucketKey = state.timelineFilters.selectedBucketKey === key ? null : key;
+  renderTimelineChart();
+}
+
+function handleTimelineDayDetailClick(event) {
+  if (event.target.closest("[data-close-day-detail]")) {
+    state.timelineFilters.selectedBucketKey = null;
+    renderTimelineChart();
+  }
 }
 
 function renderLineChart(container, points, label) {
@@ -1538,8 +1989,21 @@ function handleTransactionTabClick(event) {
   render();
 }
 
-function handleMonthSelectorChange() {
-  state.activeMonth = els.monthSelector.value;
+function handlePeriodSelectorChange() {
+  if (state.viewScope === "year") {
+    state.activeYear = els.periodSelector.value;
+  } else {
+    state.activeMonth = els.periodSelector.value;
+  }
+  render();
+}
+
+function handlePeriodScopeToggleClick(event) {
+  const button = event.target.closest("[data-scope]");
+  if (!button) {
+    return;
+  }
+  state.viewScope = button.dataset.scope;
   render();
 }
 
@@ -1553,15 +2017,69 @@ function handleTimelineGranularityClick(event) {
 }
 
 function handleTimelineFilterChange() {
-  state.timelineFilters.category = els.timelineCategoryFilter.value;
-  state.timelineFilters.account = els.timelineAccountFilter.value;
   state.timelineFilters.fromDate = els.timelineFromDate.value;
   state.timelineFilters.toDate = els.timelineToDate.value;
   renderTimelineChart();
 }
 
 function handleTimelineFilterClear() {
-  state.timelineFilters = { category: "", account: "", granularity: "day", fromDate: "", toDate: "" };
+  state.timelineFilters = {
+    categories: [],
+    accounts: [],
+    granularity: "day",
+    openDropdown: null,
+    ...getCurrentMonthRange(),
+  };
+  renderTimelineChart();
+}
+
+function handleMultiSelectFilterClick(event) {
+  const button = event.target.closest(".multi-select-button");
+  if (button) {
+    const wrapper = button.closest(".multi-select");
+    const dropdownKey = wrapper === els.timelineCategoryFilter ? "category" : "account";
+    state.timelineFilters.openDropdown = state.timelineFilters.openDropdown === dropdownKey ? null : dropdownKey;
+    event.stopPropagation();
+    renderTimelineChart();
+    return;
+  }
+
+  const clearOption = event.target.closest("[data-clear-dropdown]");
+  if (clearOption) {
+    if (clearOption.dataset.clearDropdown === "category") {
+      state.timelineFilters.categories = [];
+    } else {
+      state.timelineFilters.accounts = [];
+    }
+    event.stopPropagation();
+    renderTimelineChart();
+  }
+}
+
+function handleMultiSelectFilterChange(event) {
+  const checkbox = event.target.closest('input[type="checkbox"][data-dropdown]');
+  if (!checkbox) {
+    return;
+  }
+  const list =
+    checkbox.dataset.dropdown === "category" ? state.timelineFilters.categories : state.timelineFilters.accounts;
+  const index = list.indexOf(checkbox.value);
+  if (checkbox.checked && index === -1) {
+    list.push(checkbox.value);
+  } else if (!checkbox.checked && index !== -1) {
+    list.splice(index, 1);
+  }
+  renderTimelineChart();
+}
+
+function handleDocumentClickForDropdowns(event) {
+  if (!state.timelineFilters.openDropdown) {
+    return;
+  }
+  if (event.target.closest(".multi-select")) {
+    return;
+  }
+  state.timelineFilters.openDropdown = null;
   renderTimelineChart();
 }
 
@@ -1721,16 +2239,16 @@ function loadDemoData() {
       totalCharges: 3478.82,
       serviceFees: 16.95,
       transactions: [
-        createDemoTx("May 02", "Payment Thank You", -2140, 980.41, "Credits", "credit", "2026-05-02"),
+        createDemoTx("May 02", "Payment Thank You", -2140, 980.41, "Credit Card Payment", "credit", "2026-05-02"),
         createDemoTx("May 03", "Metro Grocery", 138.42, 1118.83, "Groceries", "charge", "2026-05-03"),
-        createDemoTx("May 04", "Tim Hortons", 11.58, 1130.41, "Entertainment & Going Out", "charge", "2026-05-04"),
+        createDemoTx("May 04", "Tim Hortons", 11.58, 1130.41, "Food & Alcohol", "charge", "2026-05-04"),
         createDemoTx("May 08", "Air Canada", 650, 1780.41, "Travel", "charge", "2026-05-08"),
-        createDemoTx("May 10", "Shell Fuel", 72.16, 1852.57, "Transportation & Car", "charge", "2026-05-10"),
-        createDemoTx("May 14", "Amazon Marketplace", 88.34, 1940.91, "Shopping & Beauty", "charge", "2026-05-14"),
-        createDemoTx("May 21", "Interest Charge", 16.95, 1957.86, "Fees", "charge", "2026-05-21"),
-        createDemoTx("May 23", "Uber Trip", 24.03, 1981.89, "Transportation & Car", "charge", "2026-05-23"),
-        createDemoTx("May 25", "Starbucks", 8.42, 1990.31, "Entertainment & Going Out", "charge", "2026-05-25"),
-        createDemoTx("May 28", "Return Credit", -45, 1945.31, "Credits", "credit", "2026-05-28"),
+        createDemoTx("May 10", "Shell Fuel", 72.16, 1852.57, "Transportation", "charge", "2026-05-10"),
+        createDemoTx("May 14", "Amazon Marketplace", 88.34, 1940.91, "Shopping - Misc", "charge", "2026-05-14"),
+        createDemoTx("May 21", "Interest Charge", 16.95, 1957.86, "Misc", "charge", "2026-05-21"),
+        createDemoTx("May 23", "Uber Trip", 24.03, 1981.89, "Transportation", "charge", "2026-05-23"),
+        createDemoTx("May 25", "Starbucks", 8.42, 1990.31, "Food & Alcohol", "charge", "2026-05-25"),
+        createDemoTx("May 28", "Return Credit", -45, 1945.31, "Income", "credit", "2026-05-28"),
       ],
     },
     {
@@ -1747,15 +2265,15 @@ function loadDemoData() {
       totalCharges: 1210.29,
       serviceFees: 16.95,
       transactions: [
-        createDemoTx("Jun 02", "Payment Thank You", -2300, 2175.18, "Credits", "credit", "2026-06-02"),
+        createDemoTx("Jun 02", "Payment Thank You", -2300, 2175.18, "Credit Card Payment", "credit", "2026-06-02"),
         createDemoTx("Jun 03", "FreshCo Grocery", 121.77, 2296.95, "Groceries", "charge", "2026-06-03"),
-        createDemoTx("Jun 12", "Uber Eats", 42.14, 2339.09, "Entertainment & Going Out", "charge", "2026-06-12"),
+        createDemoTx("Jun 12", "Uber Eats", 42.14, 2339.09, "Food & Alcohol", "charge", "2026-06-12"),
         createDemoTx("Jun 20", "Costco", 184.61, 2523.70, "Groceries", "charge", "2026-06-20"),
-        createDemoTx("Jun 21", "Interest Charge", 16.95, 2540.65, "Fees", "charge", "2026-06-21"),
-        createDemoTx("Jun 24", "Petro Canada", 68.90, 2609.55, "Transportation & Car", "charge", "2026-06-24"),
+        createDemoTx("Jun 21", "Interest Charge", 16.95, 2540.65, "Misc", "charge", "2026-06-21"),
+        createDemoTx("Jun 24", "Petro Canada", 68.90, 2609.55, "Transportation", "charge", "2026-06-24"),
         createDemoTx("Jun 27", "WestJet", 525.48, 3135.03, "Travel", "charge", "2026-06-27"),
-        createDemoTx("Jun 29", "Amazon Marketplace", 91.44, 3226.47, "Shopping & Beauty", "charge", "2026-06-29"),
-        createDemoTx("Jun 30", "Refund Credit", -50, 3176.47, "Credits", "credit", "2026-06-30"),
+        createDemoTx("Jun 29", "Amazon Marketplace", 91.44, 3226.47, "Shopping - Misc", "charge", "2026-06-29"),
+        createDemoTx("Jun 30", "Refund Credit", -50, 3176.47, "Income", "credit", "2026-06-30"),
       ],
     },
     {
@@ -1777,13 +2295,13 @@ function loadDemoData() {
         createDemoTx("Jun 01", "Payroll Deposit", 1625, 3450.22, "Income", "credit", "2026-06-01"),
         createDemoTx("Jun 03", "Rent Payment", -1550, 1900.22, "Rent & Utilities", "charge", "2026-06-03"),
         createDemoTx("Jun 04", "FreshCo Grocery", -128.10, 1772.12, "Groceries", "charge", "2026-06-04"),
-        createDemoTx("Jun 09", "E-Transfer Deposit", 250, 2022.12, "E-Transfer", "credit", "2026-06-09"),
+        createDemoTx("Jun 09", "E-Transfer Deposit", 250, 2022.12, "Income", "credit", "2026-06-09"),
         createDemoTx("Jun 11", "Hydro Payment", -96.34, 1925.78, "Rent & Utilities", "charge", "2026-06-11"),
-        createDemoTx("Jun 14", "Shell Fuel", -74.88, 1850.90, "Transportation & Car", "charge", "2026-06-14"),
+        createDemoTx("Jun 14", "Shell Fuel", -74.88, 1850.90, "Transportation", "charge", "2026-06-14"),
         createDemoTx("Jun 15", "Payroll Deposit", 1625, 3475.90, "Income", "credit", "2026-06-15"),
         createDemoTx("Jun 18", "Costco", -210.45, 3265.45, "Groceries", "charge", "2026-06-18"),
-        createDemoTx("Jun 23", "Service Fee", -11.95, 3253.50, "Fees", "charge", "2026-06-23"),
-        createDemoTx("Jun 26", "Amazon Marketplace", -64.63, 3188.87, "Shopping & Beauty", "charge", "2026-06-26"),
+        createDemoTx("Jun 23", "Service Fee", -11.95, 3253.50, "Misc", "charge", "2026-06-23"),
+        createDemoTx("Jun 26", "Amazon Marketplace", -64.63, 3188.87, "Shopping - Misc", "charge", "2026-06-26"),
       ],
     },
   ];
@@ -2141,6 +2659,14 @@ function formatMonthLabel(monthKey) {
 }
 
 function getMonthFilteredTransactions() {
+  if (state.viewScope === "year") {
+    if (!state.activeYear) {
+      return state.transactions;
+    }
+    return state.transactions.filter(
+      (transaction) => (getTransactionMonthKey(transaction) || "").slice(0, 4) === state.activeYear
+    );
+  }
   if (!state.activeMonth) {
     return state.transactions;
   }
@@ -2149,18 +2675,38 @@ function getMonthFilteredTransactions() {
   );
 }
 
+function getAvailableYears() {
+  const years = new Set(
+    state.transactions.map((transaction) => (getTransactionMonthKey(transaction) || "").slice(0, 4)).filter(Boolean)
+  );
+  return Array.from(years).sort((a, b) => b.localeCompare(a));
+}
+
 function renderMonthSelector() {
-  const months = getAvailableMonths();
-  els.monthSelector.innerHTML =
+  els.periodScopeToggle.querySelectorAll("[data-scope]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.scope === state.viewScope);
+  });
+
+  if (state.viewScope === "year") {
+    const years = Array.from(new Set([...getAvailableYears(), state.activeYear].filter(Boolean))).sort((a, b) =>
+      b.localeCompare(a)
+    );
+    els.periodSelector.innerHTML =
+      `<option value="">All years</option>` +
+      years.map((year) => `<option value="${year}">${escapeHtml(year)}</option>`).join("");
+    els.periodSelector.value = state.activeYear;
+    return;
+  }
+
+  const months = Array.from(new Set([...getAvailableMonths(), state.activeMonth].filter(Boolean))).sort((a, b) =>
+    b.localeCompare(a)
+  );
+  els.periodSelector.innerHTML =
     `<option value="">All months</option>` +
     months
       .map((monthKey) => `<option value="${monthKey}">${escapeHtml(formatMonthLabel(monthKey))}</option>`)
       .join("");
-
-  if (state.activeMonth && !months.includes(state.activeMonth)) {
-    state.activeMonth = "";
-  }
-  els.monthSelector.value = state.activeMonth;
+  els.periodSelector.value = state.activeMonth;
 }
 
 function populateBudgetCategoryInputs() {
@@ -2358,15 +2904,9 @@ function getMonthCategorySpend(monthKey) {
 function getMonthIncomeActual(monthKey) {
   return sumAmounts(
     state.transactions
-      .filter((transaction) => {
-        if (getTransactionMonthKey(transaction) !== monthKey) {
-          return false;
-        }
-        if (transaction.category === "Income") {
-          return true;
-        }
-        return transaction.category === "E-Transfer" && transaction.flowType === "credit";
-      })
+      .filter(
+        (transaction) => transaction.category === "Income" && getTransactionMonthKey(transaction) === monthKey
+      )
       .map((transaction) => Math.abs(transaction.amount))
   );
 }
@@ -2882,18 +3422,28 @@ function renderCategoryBadge(category) {
 function normalizeStatementCategories(statements) {
   const legacyMap = {
     Housing: "Rent & Utilities",
-    Dining: "Entertainment & Going Out",
-    Transport: "Transportation & Car",
-    Shopping: "Shopping & Beauty",
+    Dining: "Food & Alcohol",
+    Transport: "Transportation",
+    Shopping: "Shopping - Misc",
     Bills: "Misc",
     Uncategorized: "Undecided",
+    "Entertainment & Going Out": "Food & Alcohol",
+    "Transportation & Car": "Transportation",
+    "Shopping & Beauty": "Shopping - Misc",
+    Fees: "Misc",
+    Cash: "Misc",
+    Credits: "Income",
+    "E-Transfer": "Income",
   };
 
   statements.forEach((statement) => {
-    statement.transactions = (statement.transactions || []).map((transaction) => ({
-      ...transaction,
-      category: legacyMap[transaction.category] || transaction.category || "Undecided",
-    }));
+    statement.transactions = (statement.transactions || []).map((transaction) => {
+      const mapped = legacyMap[transaction.category] || transaction.category || "Undecided";
+      return {
+        ...transaction,
+        category: categoryOptions.includes(mapped) ? mapped : "Undecided",
+      };
+    });
   });
 }
 

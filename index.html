@@ -152,10 +152,12 @@
 
         <section id="allDataPage" class="page-section">
         <div class="month-selector-row">
-          <label for="monthSelector">Viewing</label>
-          <select id="monthSelector" class="category-select" aria-label="Filter all data by month">
-            <option value="">All months</option>
-          </select>
+          <label>Viewing</label>
+          <div class="granularity-toggle" id="periodScopeToggle">
+            <button type="button" class="tab-button active" data-scope="month">Month</button>
+            <button type="button" class="tab-button" data-scope="year">Year</button>
+          </div>
+          <select id="periodSelector" class="category-select" aria-label="Filter all data by period"></select>
         </div>
         <section class="overview-grid">
           <article class="metric-card glass-card">
@@ -176,6 +178,8 @@
           </article>
         </section>
 
+        <article class="glass-card section-card full-width hidden" id="incomeGoalCard"></article>
+
         <section class="content-grid">
           <article class="glass-card section-card">
             <div class="card-heading">
@@ -187,6 +191,21 @@
             <div id="statementSections" class="stack-list empty-state">
               Upload credit card or debit statements to see saved summaries,
               balances, and parsed sections.
+            </div>
+          </article>
+
+          <article class="glass-card section-card full-width">
+            <div class="card-heading">
+              <div>
+                <p class="section-tag">Manage</p>
+                <h2>Edit past statements</h2>
+                <p class="muted details-note">
+                  Edit, recategorize, or remove transactions from a statement you already saved.
+                </p>
+              </div>
+            </div>
+            <div id="manageStatementsList" class="stack-list empty-state">
+              Upload credit card or debit statements to manage them here.
             </div>
           </article>
 
@@ -218,7 +237,7 @@
             <div class="card-heading">
               <div>
                 <p class="section-tag">Visual 3</p>
-                <h2>Month-End Balance</h2>
+                <h2>Month-End Balance (Debit)</h2>
               </div>
             </div>
             <div id="balanceChart" class="chart-area empty-state">
@@ -251,12 +270,14 @@
                 <button type="button" class="tab-button" data-granularity="week">Week</button>
                 <button type="button" class="tab-button" data-granularity="month">Month</button>
               </div>
-              <select id="timelineCategoryFilter" class="category-select" aria-label="Filter timeline by category">
-                <option value="">All categories</option>
-              </select>
-              <select id="timelineAccountFilter" class="category-select" aria-label="Filter timeline by account">
-                <option value="">All accounts</option>
-              </select>
+              <div class="multi-select" id="timelineCategoryFilter">
+                <button type="button" class="category-select multi-select-button" aria-haspopup="listbox">All categories</button>
+                <div class="multi-select-menu hidden"></div>
+              </div>
+              <div class="multi-select" id="timelineAccountFilter">
+                <button type="button" class="category-select multi-select-button" aria-haspopup="listbox">All accounts</button>
+                <div class="multi-select-menu hidden"></div>
+              </div>
               <input id="timelineFromDate" class="filter-input timeline-date-input" type="date" aria-label="From date" />
               <input id="timelineToDate" class="filter-input timeline-date-input" type="date" aria-label="To date" />
               <button id="timelineFilterClear" class="ghost-button compact-button" type="button">Reset</button>
@@ -264,6 +285,7 @@
             <div id="timelineChart" class="chart-area empty-state">
               Daily or statement-level spending trends will show here.
             </div>
+            <div id="timelineDayDetail" class="hidden"></div>
           </article>
         </section>
         </section>
