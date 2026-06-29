@@ -1165,6 +1165,8 @@ button {
   display: grid;
   gap: 0.45rem;
   width: 100%;
+  max-height: 220px;
+  overflow-y: auto;
 }
 
 .legend-item {

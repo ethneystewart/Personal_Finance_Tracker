@@ -458,6 +458,10 @@ function parseRbcStatement(text, fileName, forcedStatementKind) {
       .map((item) => Math.abs(item.amount))
   );
 
+  const resolvedCredits = Math.abs(totalCredits ?? creditsFromTransactions);
+  const resolvedCharges = Math.abs(totalCharges ?? chargesFromTransactions);
+  const resolvedFees = Math.abs(serviceFees ?? feesFromTransactions);
+
   return {
     id: crypto.randomUUID(),
     fileName,
@@ -468,11 +472,11 @@ function parseRbcStatement(text, fileName, forcedStatementKind) {
     statementPeriod,
     openingBalance: openingBalance ?? 0,
     closingBalance: closingBalance ?? openingBalance ?? 0,
-    totalCredits: totalCredits ?? creditsFromTransactions,
-    totalCharges: totalCharges ?? chargesFromTransactions,
-    serviceFees: serviceFees ?? feesFromTransactions,
-    totalInflow: totalCredits ?? creditsFromTransactions,
-    totalOutflow: totalCharges ?? chargesFromTransactions,
+    totalCredits: resolvedCredits,
+    totalCharges: resolvedCharges,
+    serviceFees: resolvedFees,
+    totalInflow: resolvedCredits,
+    totalOutflow: resolvedCharges,
     transactions,
   };
 }
@@ -591,7 +595,7 @@ function finalizeDebitTransaction(current, fileName, statementPeriod, statementK
     description,
     category,
     flowType,
-    amount: current.amount,
+    amount: Math.abs(current.amount),
     balanceAfter: current.balanceAfter ?? null,
   };
 }
@@ -764,7 +768,7 @@ function finalizeCreditCardTransaction(current, fileName, statementPeriod, state
     details: current.details,
     category,
     flowType,
-    amount: current.amount,
+    amount: Math.abs(current.amount),
     balanceAfter: null,
   };
 }
@@ -949,7 +953,8 @@ function handleDraftStatementFieldInput(event) {
 }
 
 function renderOverview() {
-  const transactions = getMonthFilteredTransactions();
+  const allTransactions = getMonthFilteredTransactions();
+  const transactions = excludeInternalTransfers(allTransactions);
   const inflow = sumAmounts(
     transactions
       .filter((transaction) => transaction.flowType === "credit")
@@ -964,7 +969,7 @@ function renderOverview() {
 
   const isPeriodFiltered = state.viewScope === "year" ? Boolean(state.activeYear) : Boolean(state.activeMonth);
   els.statementCount.textContent = isPeriodFiltered
-    ? String(new Set(transactions.map((transaction) => transaction.fileName)).size)
+    ? String(new Set(allTransactions.map((transaction) => transaction.fileName)).size)
     : String(state.statements.length);
   els.incomeTotal.previousElementSibling.textContent = "Total money in";
   els.spendingTotal.previousElementSibling.textContent = "Total money out";
@@ -986,7 +991,7 @@ function renderIncomeGoalCard() {
   const budget = getEffectiveBudget(monthKey);
   const incomeGoal = budget?.amounts?.Income || 0;
   const spend = sumAmounts(
-    getMonthFilteredTransactions()
+    excludeInternalTransfers(getMonthFilteredTransactions())
       .filter((transaction) => transaction.flowType === "charge")
       .map((transaction) => Math.abs(transaction.amount))
   );
@@ -1074,8 +1079,9 @@ function renderStatements() {
   els.statementSections.innerHTML = monthKeys
     .map((monthKey) => {
       const items = grouped[monthKey];
-      const inflow = sumAmounts(items.filter((tx) => tx.flowType === "credit").map((tx) => Math.abs(tx.amount)));
-      const outflow = sumAmounts(items.filter((tx) => tx.flowType === "charge").map((tx) => Math.abs(tx.amount)));
+      const externalItems = excludeInternalTransfers(items);
+      const inflow = sumAmounts(externalItems.filter((tx) => tx.flowType === "credit").map((tx) => Math.abs(tx.amount)));
+      const outflow = sumAmounts(externalItems.filter((tx) => tx.flowType === "charge").map((tx) => Math.abs(tx.amount)));
       const savings = sumAmounts(items.filter((tx) => tx.category === "Savings").map((tx) => Math.abs(tx.amount)));
       const statementLabels = Array.from(
         new Set(
@@ -1355,7 +1361,7 @@ function renderFlowChart() {
     return;
   }
 
-  const transactions = getMonthFilteredTransactions();
+  const transactions = excludeInternalTransfers(getMonthFilteredTransactions());
   const series = [
     { label: "Money in", value: sumAmounts(transactions.filter((item) => item.flowType === "credit").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #88d5b5, #52c4a8)" },
     { label: "Money out", value: sumAmounts(transactions.filter((item) => item.flowType === "charge").map((item) => Math.abs(item.amount))), color: "linear-gradient(180deg, #ff8db1, #d95b7a)" },
@@ -1384,10 +1390,10 @@ function renderFlowChart() {
 
 function renderCategoryChart() {
   const outflowTransactions = getMonthFilteredTransactions().filter(
-    (item) => item.flowType === "charge" && findSubmittedStatementKind(item) === "credit-card"
+    (item) => item.flowType === "charge" && item.category !== "Credit Card Payment"
   );
   if (!outflowTransactions.length) {
-    setEmpty(els.categoryChart, "Credit card spending categories will show here.");
+    setEmpty(els.categoryChart, "Spending categories will show here.");
     return;
   }
 
@@ -1395,10 +1401,9 @@ function renderCategoryChart() {
   const entries = Object.entries(grouped)
     .map(([name, items]) => ({
       name,
-      value: Math.abs(sumAmounts(items.map((item) => item.amount))),
+      value: sumAmounts(items.map((item) => Math.abs(item.amount))),
     }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 6);
+    .sort((a, b) => b.value - a.value);
 
   const total = sumAmounts(entries.map((entry) => entry.value));
   let offset = 0;
@@ -1416,7 +1421,7 @@ function renderCategoryChart() {
       <div class="donut" style="background: conic-gradient(${gradientParts});">
         <div class="donut-center">
           <strong>${formatMoney(total)}</strong>
-          <span>Credit card spending</span>
+          <span>Total spending</span>
         </div>
       </div>
       <div class="legend">
@@ -2675,6 +2680,10 @@ function getMonthFilteredTransactions() {
   );
 }
 
+function excludeInternalTransfers(transactions) {
+  return transactions.filter((transaction) => transaction.category !== "Credit Card Payment");
+}
+
 function getAvailableYears() {
   const years = new Set(
     state.transactions.map((transaction) => (getTransactionMonthKey(transaction) || "").slice(0, 4)).filter(Boolean)
@@ -3153,7 +3162,13 @@ function hydrateFromStorage() {
 
     state.statements = parsed.sort(sortByPeriod);
     normalizeStatementCategories(state.statements);
+    normalizeStatementAmounts(state.statements);
     state.transactions = state.statements.flatMap((statement) => statement.transactions || []);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.statements));
+    } catch (error) {
+      console.error(error);
+    }
     state.selectedTransactionIds = [];
     state.activeStatementKey = "all";
     setStatus(
@@ -3444,6 +3459,18 @@ function normalizeStatementCategories(statements) {
         category: categoryOptions.includes(mapped) ? mapped : "Undecided",
       };
     });
+  });
+}
+
+function normalizeStatementAmounts(statements) {
+  statements.forEach((statement) => {
+    statement.transactions = (statement.transactions || []).map((transaction) => ({
+      ...transaction,
+      amount: Math.abs(transaction.amount ?? 0),
+    }));
+    recalculateStatementTotals(statement);
+    statement.totalInflow = statement.totalCredits;
+    statement.totalOutflow = statement.totalCharges;
   });
 }
 
