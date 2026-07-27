@@ -17,6 +17,7 @@ const state = {
   viewScope: "month",
   activeMonth: getCurrentMonthKey(),
   activeYear: String(new Date().getFullYear()),
+  pastStatementsCollapsed: true,
   filters: {
     search: "",
     category: "",
@@ -25,6 +26,7 @@ const state = {
   timelineFilters: {
     categories: [],
     accounts: [],
+    hiddenCategories: [],
     granularity: "day",
     openDropdown: null,
     selectedBucketKey: null,
@@ -32,6 +34,7 @@ const state = {
   },
   budgets: [],
   budgetMonth: "",
+  selectedCategory: "",
 };
 
 const STORAGE_KEY = "my-personal-finance-tracker-statements-v1";
@@ -99,10 +102,11 @@ const els = {
   netTotal: document.querySelector("#netTotal"),
   statementSections: document.querySelector("#statementSections"),
   manageStatementsList: document.querySelector("#manageStatementsList"),
+  pastStatementsToggle: document.querySelector("#pastStatementsToggle"),
+  pastStatementsContent: document.querySelector("#pastStatementsContent"),
   incomeGoalCard: document.querySelector("#incomeGoalCard"),
   flowChart: document.querySelector("#flowChart"),
   categoryChart: document.querySelector("#categoryChart"),
-  balanceChart: document.querySelector("#balanceChart"),
   creditCardSpendChart: document.querySelector("#creditCardSpendChart"),
   timelineChart: document.querySelector("#timelineChart"),
   transactionTable: document.querySelector("#transactionTable"),
@@ -211,6 +215,7 @@ function init() {
   els.transactionTable.addEventListener("click", handleTransactionTableClick);
   els.manageStatementsList.addEventListener("click", handleManageStatementsClick);
   els.manageStatementsList.addEventListener("change", handleManageStatementsChange);
+  els.pastStatementsToggle.addEventListener("click", handlePastStatementsToggle);
   els.incomeGoalCard.addEventListener("change", handleIncomeGoalInputChange);
   els.transactionTabs.addEventListener("click", handleTransactionTabClick);
   els.searchFilter.addEventListener("input", handleFilterInput);
@@ -227,6 +232,7 @@ function init() {
   els.timelineFromDate.addEventListener("change", handleTimelineFilterChange);
   els.timelineToDate.addEventListener("change", handleTimelineFilterChange);
   els.timelineFilterClear.addEventListener("click", handleTimelineFilterClear);
+  els.categoryChart.addEventListener("click", handleCategoryChartClick);
   els.timelineChart.addEventListener("click", handleTimelineChartClick);
   els.timelineDayDetail.addEventListener("click", handleTimelineDayDetailClick);
   els.saveBudgetButton.addEventListener("click", handleSaveBudget);
@@ -864,9 +870,9 @@ function render() {
   renderIncomeGoalCard();
   renderStatements();
   renderManageStatements();
+  renderPastStatementsCollapseState();
   renderFlowChart();
   renderCategoryChart();
-  renderBalanceChart();
   renderCreditCardSpendChart();
   renderTimelineChart();
   renderEntryFlow();
@@ -1092,11 +1098,13 @@ function renderStatements() {
         )
       );
       const label = monthKey === "unknown" ? "Undated transactions" : formatMonthLabel(monthKey);
+      const statementCount = statementLabels.length;
+      const transactionCount = items.length;
 
       return `
         <article class="statement-card">
           <h3>${escapeHtml(label)}</h3>
-          <p>${statementLabels.length} statement${statementLabels.length === 1 ? "" : "s"} combined: ${escapeHtml(statementLabels.join(", "))}</p>
+          <p>${statementCount} statement${statementCount === 1 ? "" : "s"} · ${transactionCount} transaction${transactionCount === 1 ? "" : "s"}</p>
           <div class="section-summary">
             <span class="chip">Money in ${formatMoney(inflow)}</span>
             <span class="chip">Money out ${formatMoney(outflow)}</span>
@@ -1104,6 +1112,7 @@ function renderStatements() {
             <span class="chip">Savings ${formatMoney(savings)}</span>
             <span class="chip">${items.length} transactions</span>
           </div>
+          <p class="muted statement-source-list">Statements: ${escapeHtml(statementLabels.join(", "))}</p>
         </article>
       `;
     })
@@ -1393,6 +1402,7 @@ function renderCategoryChart() {
     (item) => item.flowType === "charge" && item.category !== "Credit Card Payment"
   );
   if (!outflowTransactions.length) {
+    state.selectedCategory = "";
     setEmpty(els.categoryChart, "Spending categories will show here.");
     return;
   }
@@ -1401,65 +1411,125 @@ function renderCategoryChart() {
   const entries = Object.entries(grouped)
     .map(([name, items]) => ({
       name,
-      value: sumAmounts(items.map((item) => Math.abs(item.amount))),
+      value: sumAmounts(
+        items.map((item) => {
+          const amount = Number(item.amount);
+          return Number.isFinite(amount) ? Math.abs(amount) : 0;
+        })
+      ),
+      items: [...items].sort((a, b) => {
+        const amountDiff = Math.abs(Number(b.amount) || 0) - Math.abs(Number(a.amount) || 0);
+        if (amountDiff !== 0) {
+          return amountDiff;
+        }
+        return (b.isoDate || "").localeCompare(a.isoDate || "");
+      }),
     }))
     .sort((a, b) => b.value - a.value);
 
-  const total = sumAmounts(entries.map((entry) => entry.value));
+  if (!entries.some((entry) => entry.name === state.selectedCategory)) {
+    state.selectedCategory = entries[0]?.name || "";
+  }
+
+  const total = sumAmounts(entries.map((entry) => Number(entry.value) || 0));
+  const safeTotal = total > 0 ? total : 0;
   let offset = 0;
-  const gradientParts = entries
-    .map((entry, index) => {
-      const start = offset;
-      offset += (entry.value / total) * 100;
-      return `${getCategoryColor(entry.name).solid} ${start.toFixed(2)}% ${offset.toFixed(2)}%`;
-    })
+  const slices = entries.map((entry) => {
+    const value = Number(entry.value) || 0;
+    const start = offset;
+    const share = safeTotal > 0 ? (value / safeTotal) * 100 : 0;
+    offset += share;
+    return {
+      ...entry,
+      value,
+      start,
+      end: offset,
+      share,
+    };
+  });
+  const selectedEntry = slices.find((entry) => entry.name === state.selectedCategory) || slices[0];
+  state.categoryChartSlices = slices.map((entry) => ({
+    name: entry.name,
+    start: entry.start,
+    end: entry.end,
+  }));
+  const gradientParts = slices
+    .map((entry) => `${getCategoryColor(entry.name).solid} ${entry.start.toFixed(2)}% ${entry.end.toFixed(2)}%`)
     .join(", ");
 
   els.categoryChart.className = "chart-area";
   els.categoryChart.innerHTML = `
-    <div class="donut-wrap">
-      <div class="donut" style="background: conic-gradient(${gradientParts});">
-        <div class="donut-center">
-          <strong>${formatMoney(total)}</strong>
-          <span>Total spending</span>
+    <div class="category-breakdown-layout">
+      <div class="donut-wrap">
+        <div class="donut-shell">
+          <div class="donut category-donut ${selectedEntry ? "has-selection" : ""}" style="background: conic-gradient(${gradientParts});" aria-label="Category spending breakdown">
+            <div class="donut-center">
+              <strong>${formatMoney(total)}</strong>
+              <span>Total spending</span>
+            </div>
+          </div>
+        </div>
+        <div class="category-selected-summary">
+          <span class="section-tag">Selected</span>
+          <strong>${escapeHtml(selectedEntry.name)}</strong>
+          <span>${selectedEntry.items.length} charge${selectedEntry.items.length === 1 ? "" : "s"} · ${formatMoney(selectedEntry.value)} · ${Math.round(Number(selectedEntry.share) || 0)}%</span>
+        </div>
+        <div class="legend category-legend">
+          ${slices
+            .map(
+              (entry) => `
+                <button
+                  type="button"
+                  class="legend-item legend-button ${entry.name === state.selectedCategory ? "active" : ""}"
+                  data-category-chart-category="${escapeHtml(entry.name)}"
+                >
+                  <span class="legend-name">
+                    <span class="swatch" style="background:${getCategoryColor(entry.name).solid}"></span>
+                    <span>${escapeHtml(entry.name)}</span>
+                  </span>
+                  <span class="legend-metrics">
+                    <strong>${formatMoney(entry.value)}</strong>
+                    <span class="muted">${Math.round(Number(entry.share) || 0)}%</span>
+                  </span>
+                </button>
+              `
+            )
+            .join("")}
         </div>
       </div>
-      <div class="legend">
-        ${entries
-          .map(
-            (entry, index) => `
-              <div class="legend-item">
-                <div class="legend-name">
-                  <span class="swatch" style="background:${getCategoryColor(entry.name).solid}"></span>
-                  <span>${escapeHtml(entry.name)}</span>
-                </div>
-                <strong>${formatMoney(entry.value)}</strong>
-              </div>
-            `
-          )
-          .join("")}
+      <div class="category-detail-card">
+        <div class="day-detail-heading">
+          <h3>${escapeHtml(selectedEntry.name)} <span class="muted">· ${selectedEntry.items.length} charge${selectedEntry.items.length === 1 ? "" : "s"} · ${formatMoney(selectedEntry.value)}</span></h3>
+        </div>
+        <div class="table-wrap category-detail-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Description</th>
+                <th>Amount</th>
+                <th>Statement</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${selectedEntry.items
+                .map(
+                  (tx) => `
+                    <tr>
+                      <td>${escapeHtml(tx.dateLabel)}</td>
+                      <td>${escapeHtml(tx.description)}</td>
+                      <td class="amount-negative">${formatMoney(tx.amount)}</td>
+                      <td>${escapeHtml(findStatementForTransaction(tx)?.cardLabel || tx.fileName)}</td>
+                    </tr>
+                  `
+                )
+                .join("")}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   `;
-}
-
-function renderBalanceChart() {
-  const debitStatements = state.statements.filter((statement) => statement.statementKind !== "credit-card");
-  if (!debitStatements.length) {
-    setEmpty(els.balanceChart, "Closing balances will be graphed here.");
-    return;
-  }
-
-  const points = debitStatements.map((statement, index) => {
-    const dateLabel = compactLabel(statement.statementPeriod, statement.cardLabel || statement.fileName);
-    const accountHint = statement.accountNumber || "Bank";
-    return {
-      label: `${dateLabel} · ${accountHint}`,
-      value: statement.closingBalance,
-      index,
-    };
-  });
-  renderLineChart(els.balanceChart, points, "Closing balance");
 }
 
 function renderCreditCardSpendChart() {
@@ -1517,10 +1587,43 @@ function getTimelineBaseTransactions() {
 }
 
 function getCurrentMonthRange() {
-  const now = new Date();
-  const fromDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-  const toDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+  return getMonthRange(getCurrentMonthKey());
+}
+
+function getMonthRange(monthKey) {
+  const [year, month] = (monthKey || "").split("-").map(Number);
+  if (!year || !month) {
+    return { fromDate: "", toDate: "" };
+  }
+  const fromDate = `${year}-${String(month).padStart(2, "0")}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const toDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
   return { fromDate, toDate };
+}
+
+function getTimelineRangeForViewingPeriod() {
+  if (state.viewScope === "month") {
+    return getMonthRange(state.activeMonth);
+  }
+  if (state.viewScope === "year" && state.activeYear) {
+    return {
+      fromDate: `${state.activeYear}-01-01`,
+      toDate: `${state.activeYear}-12-31`,
+    };
+  }
+  return { fromDate: "", toDate: "" };
+}
+
+function resetTimelineForViewingPeriod() {
+  state.timelineFilters = {
+    categories: [],
+    accounts: [],
+    hiddenCategories: [],
+    granularity: "day",
+    openDropdown: null,
+    selectedBucketKey: null,
+    ...getTimelineRangeForViewingPeriod(),
+  };
 }
 
 function getCurrentMonthKey() {
@@ -1647,8 +1750,8 @@ function renderTimelineChart() {
   const baseTransactions = getTimelineBaseTransactions();
   renderTimelineFilterControls(baseTransactions);
 
-  const { categories, accounts, granularity, fromDate, toDate } = state.timelineFilters;
-  const transactions = baseTransactions.filter((tx) => {
+  const { categories, accounts, hiddenCategories, granularity, fromDate, toDate } = state.timelineFilters;
+  const filteredTransactions = baseTransactions.filter((tx) => {
     if (categories.length && !categories.includes(tx.category)) {
       return false;
     }
@@ -1664,9 +1767,52 @@ function renderTimelineChart() {
     return true;
   });
 
-  if (!transactions.length) {
+  if (!filteredTransactions.length) {
     setEmpty(els.timelineChart, "No spending matches the current timeline filters.");
     els.timelineDayDetail.classList.add("hidden");
+    return;
+  }
+
+  const categoryTotals = {};
+  filteredTransactions.forEach((tx) => {
+    categoryTotals[tx.category] = (categoryTotals[tx.category] || 0) + Math.abs(tx.amount);
+  });
+  const categoryOrder = Object.entries(categoryTotals)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cat]) => cat);
+  const activeHiddenCategories = hiddenCategories.filter((cat) => categoryOrder.includes(cat));
+  state.timelineFilters.hiddenCategories = activeHiddenCategories;
+  const transactions = filteredTransactions.filter((tx) => !activeHiddenCategories.includes(tx.category));
+
+  const renderCategoryToggle = (cat) => {
+    const isHidden = activeHiddenCategories.includes(cat);
+    return `
+      <button
+        type="button"
+        class="legend-item legend-button timeline-legend-button ${isHidden ? "is-hidden" : ""}"
+        data-toggle-timeline-category="${escapeHtml(cat)}"
+        aria-pressed="${isHidden}"
+        title="${isHidden ? "Show" : "Hide"} ${escapeHtml(cat)}"
+      >
+        <span class="legend-name">
+          <span class="swatch" style="background:${getCategoryColor(cat).solid}"></span>
+          <span>${escapeHtml(cat)}</span>
+        </span>
+        <strong>${isHidden ? "Hidden" : formatMoney(categoryTotals[cat])}</strong>
+      </button>
+    `;
+  };
+
+  if (!transactions.length) {
+    els.timelineChart.className = "chart-area";
+    els.timelineChart.innerHTML = `
+      <div class="empty-state timeline-hidden-empty">All categories are hidden. Click one below to restore it.</div>
+      <div class="legend timeline-legend">
+        ${categoryOrder.map(renderCategoryToggle).join("")}
+      </div>
+    `;
+    els.timelineDayDetail.classList.add("hidden");
+    els.timelineDayDetail.innerHTML = "";
     return;
   }
 
@@ -1688,16 +1834,6 @@ function renderTimelineChart() {
       total: sumAmounts(Object.values(categories)),
     }))
     .sort((a, b) => a.key.localeCompare(b.key));
-
-  const categoryTotals = {};
-  days.forEach((day) => {
-    Object.entries(day.categories).forEach(([cat, amount]) => {
-      categoryTotals[cat] = (categoryTotals[cat] || 0) + amount;
-    });
-  });
-  const categoryOrder = Object.entries(categoryTotals)
-    .sort((a, b) => b[1] - a[1])
-    .map(([cat]) => cat);
 
   const max = Math.max(...days.map((day) => day.total), 1);
   const totalSpend = sumAmounts(days.map((day) => day.total));
@@ -1748,19 +1884,7 @@ function renderTimelineChart() {
         .join("")}
     </div>
     <div class="legend timeline-legend">
-      ${categoryOrder
-        .map(
-          (cat) => `
-            <div class="legend-item">
-              <div class="legend-name">
-                <span class="swatch" style="background:${getCategoryColor(cat).solid}"></span>
-                <span>${escapeHtml(cat)}</span>
-              </div>
-              <strong>${formatMoney(categoryTotals[cat])}</strong>
-            </div>
-          `
-        )
-        .join("")}
+      ${categoryOrder.map(renderCategoryToggle).join("")}
     </div>
   `;
 
@@ -1815,7 +1939,31 @@ function renderTimelineDayDetail(txByBucket, days) {
   `;
 }
 
+function handleCategoryChartClick(event) {
+  const button = event.target.closest("[data-category-chart-category]");
+  if (!button) {
+    return;
+  }
+  state.selectedCategory = button.dataset.categoryChartCategory || "";
+  renderCategoryChart();
+}
+
 function handleTimelineChartClick(event) {
+  const categoryButton = event.target.closest("[data-toggle-timeline-category]");
+  if (categoryButton) {
+    const category = categoryButton.dataset.toggleTimelineCategory;
+    const hiddenCategories = state.timelineFilters.hiddenCategories;
+    const index = hiddenCategories.indexOf(category);
+    if (index === -1) {
+      hiddenCategories.push(category);
+    } else {
+      hiddenCategories.splice(index, 1);
+    }
+    state.timelineFilters.selectedBucketKey = null;
+    renderTimelineChart();
+    return;
+  }
+
   const bar = event.target.closest("[data-bucket-key]");
   if (!bar) {
     return;
@@ -2000,6 +2148,7 @@ function handlePeriodSelectorChange() {
   } else {
     state.activeMonth = els.periodSelector.value;
   }
+  resetTimelineForViewingPeriod();
   render();
 }
 
@@ -2009,7 +2158,21 @@ function handlePeriodScopeToggleClick(event) {
     return;
   }
   state.viewScope = button.dataset.scope;
+  resetTimelineForViewingPeriod();
   render();
+}
+
+function handlePastStatementsToggle() {
+  state.pastStatementsCollapsed = !state.pastStatementsCollapsed;
+  renderPastStatementsCollapseState();
+}
+
+function renderPastStatementsCollapseState() {
+  const isCollapsed = state.pastStatementsCollapsed;
+  els.pastStatementsContent.classList.toggle("hidden", isCollapsed);
+  els.pastStatementsToggle.setAttribute("aria-expanded", String(!isCollapsed));
+  els.pastStatementsToggle.querySelector("span:first-child").textContent = isCollapsed ? "Expand" : "Collapse";
+  els.pastStatementsToggle.querySelector(".collapse-chevron").textContent = isCollapsed ? "⌄" : "⌃";
 }
 
 function handleTimelineGranularityClick(event) {
@@ -2028,13 +2191,7 @@ function handleTimelineFilterChange() {
 }
 
 function handleTimelineFilterClear() {
-  state.timelineFilters = {
-    categories: [],
-    accounts: [],
-    granularity: "day",
-    openDropdown: null,
-    ...getCurrentMonthRange(),
-  };
+  resetTimelineForViewingPeriod();
   renderTimelineChart();
 }
 
@@ -3067,7 +3224,10 @@ function renderBudgetPerformance() {
 }
 
 function sumAmounts(values) {
-  return values.reduce((sum, value) => sum + value, 0);
+  return values.reduce((sum, value) => {
+    const numericValue = Number(value);
+    return sum + (Number.isFinite(numericValue) ? numericValue : 0);
+  }, 0);
 }
 
 function barRadius(heightPx, topMax = 18, bottomMax = 8) {

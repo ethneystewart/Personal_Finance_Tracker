@@ -203,9 +203,21 @@
                   Edit, recategorize, or remove transactions from a statement you already saved.
                 </p>
               </div>
+              <button
+                id="pastStatementsToggle"
+                class="ghost-button compact-button collapse-button"
+                type="button"
+                aria-expanded="false"
+                aria-controls="pastStatementsContent"
+              >
+                <span>Expand</span>
+                <span class="collapse-chevron" aria-hidden="true">⌄</span>
+              </button>
             </div>
-            <div id="manageStatementsList" class="stack-list empty-state">
-              Upload credit card or debit statements to manage them here.
+            <div id="pastStatementsContent" class="hidden">
+              <div id="manageStatementsList" class="stack-list empty-state">
+                Upload credit card or debit statements to manage them here.
+              </div>
             </div>
           </article>
 
@@ -225,30 +237,6 @@
             <div class="card-heading">
               <div>
                 <p class="section-tag">Visual 2</p>
-                <h2>Category breakdown</h2>
-              </div>
-            </div>
-            <div id="categoryChart" class="chart-area empty-state">
-              Upload statements to classify your spending.
-            </div>
-          </article>
-
-          <article class="glass-card chart-card">
-            <div class="card-heading">
-              <div>
-                <p class="section-tag">Visual 3</p>
-                <h2>Month-End Balance (Debit)</h2>
-              </div>
-            </div>
-            <div id="balanceChart" class="chart-area empty-state">
-              Closing balances will be graphed here.
-            </div>
-          </article>
-
-          <article class="glass-card chart-card">
-            <div class="card-heading">
-              <div>
-                <p class="section-tag">Visual 4</p>
                 <h2>Monthly Credit Card Spend</h2>
               </div>
             </div>
@@ -257,10 +245,22 @@
             </div>
           </article>
 
+          <article class="glass-card chart-card full-width category-breakdown-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-tag">Visual 3</p>
+                <h2>Category breakdown</h2>
+              </div>
+            </div>
+            <div id="categoryChart" class="chart-area empty-state">
+              Upload statements to classify your spending.
+            </div>
+          </article>
+
           <article class="glass-card chart-card full-width">
             <div class="card-heading">
               <div>
-                <p class="section-tag">Visual 5</p>
+                <p class="section-tag">Visual 4</p>
                 <h2>Spending timeline</h2>
               </div>
             </div>
