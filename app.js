@@ -39,12 +39,16 @@ const state = {
 
 const STORAGE_KEY = "my-personal-finance-tracker-statements-v1";
 const BUDGETS_STORAGE_KEY = "my-personal-finance-tracker-budgets-v1";
+const DATABASE_API_URL = "/api/data";
+let databaseAvailable = false;
+let databaseSaveChain = Promise.resolve();
 
 const els = {
   fileInput: document.querySelector("#fileInput"),
   dropzone: document.querySelector("#dropzone"),
   status: document.querySelector("#status"),
   demoButton: document.querySelector("#demoButton"),
+  exportDataButton: document.querySelector("#exportDataButton"),
   clearButton: document.querySelector("#clearButton"),
   allDataNavButton: document.querySelector("#allDataNavButton"),
   newEntryButton: document.querySelector("#newEntryButton"),
@@ -166,9 +170,8 @@ const budgetableCategories = categoryOptions.filter(
 
 init();
 
-function init() {
-  hydrateFromStorage();
-  hydrateBudgetsFromStorage();
+async function init() {
+  await hydrateSavedData();
   populateCategoryOptions();
   populateBudgetCategoryInputs();
 
@@ -198,6 +201,7 @@ function init() {
   });
 
   els.demoButton.addEventListener("click", loadDemoData);
+  els.exportDataButton.addEventListener("click", exportDataBackup);
   els.clearButton.addEventListener("click", clearDashboard);
   els.statementTypeCreditButton.addEventListener("click", () => chooseStatementKind("credit-card"));
   els.statementTypeDebitButton.addEventListener("click", () => chooseStatementKind("bank-account"));
@@ -2380,9 +2384,29 @@ function clearDashboard() {
   state.selectedTransactionIds = [];
   state.activeStatementKey = "all";
   els.fileInput.value = "";
-  persistStatements("Saved data cleared from this browser");
-  setStatus("Saved data cleared from this browser.");
+  persistStatements("Saved data cleared from SQLite");
+  setStatus("Saved data cleared from SQLite.");
   render();
+}
+
+function exportDataBackup() {
+  const payload = {
+    format: "personal-finance-tracker-backup",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    statements: state.statements,
+    budgets: state.budgets,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `finance-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast("JSON backup exported");
 }
 
 function loadDemoData() {
@@ -3251,7 +3275,9 @@ function firstMatch(text, regexes) {
 }
 
 function sortByPeriod(a, b) {
-  return (extractEndDate(a.statementPeriod) || "").localeCompare(extractEndDate(b.statementPeriod) || "");
+  return (a.statementEndDate || extractEndDate(a.statementPeriod) || "").localeCompare(
+    b.statementEndDate || extractEndDate(b.statementPeriod) || ""
+  );
 }
 
 function extractEndDate(period) {
@@ -3340,17 +3366,102 @@ function hydrateFromStorage() {
   }
 }
 
-function persistStatements(toastMessage = "Saved to this browser") {
+async function hydrateSavedData() {
+  hydrateFromStorage();
+  hydrateBudgetsFromStorage();
+  const browserStatements = structuredClone(state.statements);
+  const browserBudgets = structuredClone(state.budgets);
+
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.statements));
-    showToast(toastMessage);
+    const response = await fetch(DATABASE_API_URL, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Database returned ${response.status}`);
+    }
+    const snapshot = await response.json();
+    if (!snapshot.ok || !Array.isArray(snapshot.statements) || !Array.isArray(snapshot.budgets)) {
+      throw new Error(snapshot.error || "Database returned an invalid snapshot");
+    }
+
+    databaseAvailable = true;
+    if (snapshot.empty && (browserStatements.length || browserBudgets.length)) {
+      state.statements = browserStatements;
+      state.budgets = browserBudgets;
+      await saveDatabaseSnapshotNow(createDatabaseSnapshot());
+      setStatus(
+        `Migrated ${state.statements.length} statement${state.statements.length === 1 ? "" : "s"} from this browser into SQLite.`
+      );
+    } else {
+      state.statements = snapshot.statements.sort(sortByPeriod);
+      state.budgets = snapshot.budgets.sort((a, b) => a.startMonth.localeCompare(b.startMonth));
+      setStatus(
+        `Loaded ${state.statements.length} statement${state.statements.length === 1 ? "" : "s"} from SQLite.`
+      );
+    }
+
+    normalizeStatementCategories(state.statements);
+    normalizeStatementAmounts(state.statements);
+    state.transactions = state.statements.flatMap((statement) => statement.transactions || []);
+    state.selectedTransactionIds = [];
+    state.activeStatementKey = "all";
+    cacheSnapshotInBrowser();
   } catch (error) {
     console.error(error);
+    databaseAvailable = false;
     setStatus(
-      "The dashboard updated, but browser storage is full so the data could not be saved permanently."
+      browserStatements.length || browserBudgets.length
+        ? "SQLite is unavailable, so the app loaded its browser backup. Run `python3 server.py` before making changes."
+        : "SQLite is unavailable. Run `python3 server.py` before adding financial data."
     );
-    showToast("Storage full — changes weren't saved", "error");
   }
+}
+
+function createDatabaseSnapshot() {
+  return structuredClone({ statements: state.statements, budgets: state.budgets });
+}
+
+function cacheSnapshotInBrowser() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.statements));
+    localStorage.setItem(BUDGETS_STORAGE_KEY, JSON.stringify(state.budgets));
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function saveDatabaseSnapshotNow(snapshot) {
+  const response = await fetch(DATABASE_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(snapshot),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || `Database returned ${response.status}`);
+  }
+  return result;
+}
+
+function queueDatabaseSave() {
+  const snapshot = createDatabaseSnapshot();
+  databaseSaveChain = databaseSaveChain
+    .catch(() => undefined)
+    .then(async () => {
+      try {
+        await saveDatabaseSnapshotNow(snapshot);
+        databaseAvailable = true;
+      } catch (error) {
+        console.error(error);
+        databaseAvailable = false;
+        setStatus("A browser backup was saved, but SQLite could not be updated. Keep this tab open and restart the local server.");
+        showToast("SQLite save failed — browser backup retained", "error");
+      }
+    });
+}
+
+function persistStatements(toastMessage = "Saved to SQLite") {
+  cacheSnapshotInBrowser();
+  queueDatabaseSave();
+  showToast(databaseAvailable ? toastMessage.replace("this browser", "SQLite") : "Saved browser backup; connecting to SQLite…");
 }
 
 function hydrateBudgetsFromStorage() {
@@ -3370,14 +3481,10 @@ function hydrateBudgetsFromStorage() {
 }
 
 function persistBudgets(toastMessage) {
-  try {
-    localStorage.setItem(BUDGETS_STORAGE_KEY, JSON.stringify(state.budgets));
-    if (toastMessage) {
-      showToast(toastMessage);
-    }
-  } catch (error) {
-    console.error(error);
-    showToast("Storage full — budget wasn't saved", "error");
+  cacheSnapshotInBrowser();
+  queueDatabaseSave();
+  if (toastMessage) {
+    showToast(databaseAvailable ? toastMessage : "Saved browser backup; connecting to SQLite…");
   }
 }
 
