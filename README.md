@@ -58,5 +58,7 @@ Then open `http://localhost:8000`.
 
 - `index.html` contains the layout
 - `styles.css` contains the cute responsive styling
-- `app.js` handles PDF parsing, categorization, and chart rendering
+- `app.js` is the client bootstrap: shared state, PDF parsing, storage, and cross-page interactions
+- `js/pages/all-data-page.js` renders the lifetime All Data dashboard
+- `js/pages/by-month-page.js` renders the selected-period summary and income check
 - `server.py` serves the app and saves uploaded PDFs into the repo

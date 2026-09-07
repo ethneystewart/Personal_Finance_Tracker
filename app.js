@@ -1,7 +1,21 @@
-import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
+import {
+  renderAllDataSummary as renderAllDataPageSummary,
+  renderAllDataYearFilter,
+  renderMonthlyCategorySpendChart,
+  handleAllDataYearChange,
+  handleSpendingChartPointerOver,
+  handleSpendingChartPointerOut,
+} from "./js/pages/all-data-page.js";
+import {
+  handleIncomeGoalInputChange as handleByMonthIncomeGoalChange,
+  renderIncomeGoalCard as renderByMonthIncomeGoalCard,
+  renderMonthSelector as renderByMonthSelector,
+  renderOverview as renderByMonthOverview,
+} from "./js/pages/by-month-page.js";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
+const PDF_JS_URL = "./vendor/pdfjs/pdf.min.mjs";
+const PDF_JS_WORKER_URL = "./vendor/pdfjs/pdf.worker.min.mjs";
+let pdfJsPromise = null;
 
 const state = {
   statements: [],
@@ -13,6 +27,7 @@ const state = {
   activeStatementKey: "all",
   editingStatementId: null,
   activeView: "all-data",
+  allDataYear: "",
   pendingStatementKind: null,
   viewScope: "month",
   activeMonth: getCurrentMonthKey(),
@@ -51,8 +66,10 @@ const els = {
   exportDataButton: document.querySelector("#exportDataButton"),
   clearButton: document.querySelector("#clearButton"),
   allDataNavButton: document.querySelector("#allDataNavButton"),
+  byMonthNavButton: document.querySelector("#byMonthNavButton"),
   newEntryButton: document.querySelector("#newEntryButton"),
   budgetNavButton: document.querySelector("#budgetNavButton"),
+  allDataSummaryPage: document.querySelector("#allDataSummaryPage"),
   allDataPage: document.querySelector("#allDataPage"),
   newEntryPage: document.querySelector("#newEntryPage"),
   budgetPage: document.querySelector("#budgetPage"),
@@ -104,14 +121,19 @@ const els = {
   incomeTotal: document.querySelector("#incomeTotal"),
   spendingTotal: document.querySelector("#spendingTotal"),
   netTotal: document.querySelector("#netTotal"),
-  statementSections: document.querySelector("#statementSections"),
+  allDataStatementCount: document.querySelector("#allDataStatementCount"),
+  allDataIncomeTotal: document.querySelector("#allDataIncomeTotal"),
+  allDataSpendingTotal: document.querySelector("#allDataSpendingTotal"),
+  allDataNetTotal: document.querySelector("#allDataNetTotal"),
+  allDataYearSelector: document.querySelector("#allDataYearSelector"),
+  allDataSpendingChart: document.querySelector("#allDataSpendingChart"),
+  allDataMonthHistory: document.querySelector("#allDataMonthHistory"),
   manageStatementsList: document.querySelector("#manageStatementsList"),
   pastStatementsToggle: document.querySelector("#pastStatementsToggle"),
   pastStatementsContent: document.querySelector("#pastStatementsContent"),
   incomeGoalCard: document.querySelector("#incomeGoalCard"),
   flowChart: document.querySelector("#flowChart"),
   categoryChart: document.querySelector("#categoryChart"),
-  creditCardSpendChart: document.querySelector("#creditCardSpendChart"),
   timelineChart: document.querySelector("#timelineChart"),
   transactionTable: document.querySelector("#transactionTable"),
 };
@@ -171,10 +193,6 @@ const budgetableCategories = categoryOptions.filter(
 init();
 
 async function init() {
-  await hydrateSavedData();
-  populateCategoryOptions();
-  populateBudgetCategoryInputs();
-
   els.fileInput.addEventListener("change", (event) => {
     handleFiles(Array.from(event.target.files || []));
   });
@@ -195,7 +213,7 @@ async function init() {
 
   els.dropzone.addEventListener("drop", (event) => {
     const files = Array.from(event.dataTransfer?.files || []).filter(
-      (file) => file.type === "application/pdf"
+      (file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
     );
     handleFiles(files);
   });
@@ -208,6 +226,10 @@ async function init() {
   els.changeStatementTypeButton.addEventListener("click", changeStatementKind);
   els.draftStatementFields.addEventListener("input", handleDraftStatementFieldInput);
   els.allDataNavButton.addEventListener("click", () => switchView("all-data"));
+  els.allDataYearSelector.addEventListener("change", (event) => handleAllDataYearChange(event, getAllDataPageContext()));
+  els.allDataSpendingChart.addEventListener("mouseover", handleSpendingChartPointerOver);
+  els.allDataSpendingChart.addEventListener("mouseout", handleSpendingChartPointerOut);
+  els.byMonthNavButton.addEventListener("click", () => switchView("by-month"));
   els.newEntryButton.addEventListener("click", focusEntryPanel);
   els.budgetNavButton.addEventListener("click", () => switchView("budget"));
   els.submitEntryButton.addEventListener("click", submitDraftEntry);
@@ -220,7 +242,7 @@ async function init() {
   els.manageStatementsList.addEventListener("click", handleManageStatementsClick);
   els.manageStatementsList.addEventListener("change", handleManageStatementsChange);
   els.pastStatementsToggle.addEventListener("click", handlePastStatementsToggle);
-  els.incomeGoalCard.addEventListener("change", handleIncomeGoalInputChange);
+  els.incomeGoalCard.addEventListener("change", (event) => handleByMonthIncomeGoalChange(event, getByMonthPageContext()));
   els.transactionTabs.addEventListener("click", handleTransactionTabClick);
   els.searchFilter.addEventListener("input", handleFilterInput);
   els.categoryFilter.addEventListener("change", handleFilterInput);
@@ -245,6 +267,10 @@ async function init() {
   els.budgetMonthSelector.addEventListener("change", handleBudgetMonthChange);
   els.budgetCategoryInputs.addEventListener("input", renderBudgetAllocationChart);
   els.budgetIncomeGoal.addEventListener("input", renderBudgetAllocationChart);
+
+  await hydrateSavedData();
+  populateCategoryOptions();
+  populateBudgetCategoryInputs();
   render();
 }
 
@@ -281,11 +307,15 @@ async function handleFiles(files) {
       parsedStatements.push(statement);
     } catch (error) {
       console.error(error);
-      setStatus(`I couldn't read ${file.name}. Try another text-based RBC statement PDF.`);
+      setStatus(
+        `I couldn't read ${file.name}: ${getFileProcessingErrorMessage(error)}`
+      );
     }
   }
 
   if (!parsedStatements.length) {
+    // Selecting the same file again does not fire `change` unless the input is reset.
+    els.fileInput.value = "";
     render();
     return;
   }
@@ -299,11 +329,21 @@ async function handleFiles(files) {
   setStatus(
     `Draft entry ready. Review ${state.draftTransactions.length} parsed transaction${state.draftTransactions.length === 1 ? "" : "s"}, adjust categories, then submit it to your totals.`
   );
+  // Reveal the completed draft before rendering unrelated dashboard panels.
+  // A chart failure must never leave a successfully parsed statement hidden.
+  renderEntryFlow();
+  renderDraftStatementFields();
+  renderEntryActions();
+  renderTransactionFilters();
+  renderTransactionTabs();
+  renderBulkCategoryTools();
+  renderTransactionTable();
   focusEntryPanel();
   render();
 }
 
 async function extractTextFromPdf(file) {
+  const pdfjsLib = await loadPdfJs();
   const data = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data }).promise;
   const pageTexts = [];
@@ -354,7 +394,41 @@ async function extractTextFromPdf(file) {
     pageTexts.push(pageText);
   }
 
-  return pageTexts.join("\n");
+  const extractedText = pageTexts.join("\n").trim();
+  if (!extractedText) {
+    throw new Error("No extractable text was found in this PDF.");
+  }
+
+  return extractedText;
+}
+
+async function loadPdfJs() {
+  if (!pdfJsPromise) {
+    pdfJsPromise = import(PDF_JS_URL).then((pdfjsLib) => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = PDF_JS_WORKER_URL;
+      return pdfjsLib;
+    }).catch((error) => {
+      // Allow a later upload attempt to retry after a transient loading failure.
+      pdfJsPromise = null;
+      throw error;
+    });
+  }
+
+  return pdfJsPromise;
+}
+
+function getFileProcessingErrorMessage(error) {
+  const message = String(error?.message || "").trim();
+  if (/password/i.test(message)) {
+    return "the PDF is password-protected.";
+  }
+  if (/invalid pdf|missing pdf|unexpected response|format/i.test(message)) {
+    return "the file is not a valid readable PDF.";
+  }
+  if (/fetch|import|module|worker/i.test(message)) {
+    return "the local PDF reader could not start. Reload the page and try again.";
+  }
+  return "no extractable statement text was found. Use a text-based RBC PDF rather than a scan.";
 }
 
 function detectWithdrawalDepositColumns(items) {
@@ -869,15 +943,16 @@ function render() {
   syncSelection();
   syncActiveStatementTab();
   renderView();
-  renderMonthSelector();
-  renderOverview();
-  renderIncomeGoalCard();
-  renderStatements();
+  renderByMonthSelector(getByMonthPageContext());
+  renderByMonthOverview(getByMonthPageContext());
+  renderAllDataYearFilter(getAllDataPageContext());
+  renderAllDataPageSummary(getAllDataPageContext());
+  renderByMonthIncomeGoalCard(getByMonthPageContext());
   renderManageStatements();
   renderPastStatementsCollapseState();
   renderFlowChart();
   renderCategoryChart();
-  renderCreditCardSpendChart();
+  renderMonthlyCategorySpendChart(getAllDataPageContext());
   renderTimelineChart();
   renderEntryFlow();
   renderDraftStatementFields();
@@ -890,6 +965,45 @@ function render() {
   renderBudgetMonthSelector();
   renderBudgetPerformance();
   renderBudgetAllocationChart();
+}
+
+function getAllDataPageContext() {
+  return {
+    state,
+    els,
+    helpers: {
+      escapeHtml,
+      excludeInternalTransfers,
+      formatMoney,
+      formatMonthLabel,
+      getAvailableYears,
+      getCategoryColor,
+      getTransactionMonthKey,
+      setEmpty,
+      sumAmounts,
+      render,
+    },
+  };
+}
+
+function getByMonthPageContext() {
+  return {
+    state,
+    els,
+    helpers: {
+      escapeHtml,
+      excludeInternalTransfers,
+      formatMoney,
+      formatMonthLabel,
+      getAvailableMonths,
+      getAvailableYears,
+      getEffectiveBudget,
+      getMonthFilteredTransactions,
+      persistBudgets,
+      render,
+      sumAmounts,
+    },
+  };
 }
 
 function renderEntryFlow() {
@@ -962,182 +1076,29 @@ function handleDraftStatementFieldInput(event) {
   statement[field] = input.value;
 }
 
-function renderOverview() {
-  const allTransactions = getMonthFilteredTransactions();
-  const transactions = excludeInternalTransfers(allTransactions);
-  const inflow = sumAmounts(
-    transactions
-      .filter((transaction) => transaction.flowType === "credit")
-      .map((transaction) => Math.abs(transaction.amount))
-  );
-  const outflow = sumAmounts(
-    transactions
-      .filter((transaction) => transaction.flowType === "charge")
-      .map((transaction) => Math.abs(transaction.amount))
-  );
-  const netChange = inflow - outflow;
-
-  const isPeriodFiltered = state.viewScope === "year" ? Boolean(state.activeYear) : Boolean(state.activeMonth);
-  els.statementCount.textContent = isPeriodFiltered
-    ? String(new Set(allTransactions.map((transaction) => transaction.fileName)).size)
-    : String(state.statements.length);
-  els.incomeTotal.previousElementSibling.textContent = "Total money in";
-  els.spendingTotal.previousElementSibling.textContent = "Total money out";
-  els.netTotal.previousElementSibling.textContent = "Net change";
-  els.incomeTotal.textContent = formatMoney(inflow);
-  els.spendingTotal.textContent = formatMoney(outflow);
-  els.netTotal.textContent = formatMoney(netChange);
-  els.netTotal.className = netChange < 0 ? "amount-negative" : "amount-positive";
-}
-
-function renderIncomeGoalCard() {
-  const monthKey = state.viewScope === "month" ? state.activeMonth : "";
-  if (!monthKey) {
-    els.incomeGoalCard.classList.add("hidden");
-    els.incomeGoalCard.innerHTML = "";
-    return;
-  }
-
-  const budget = getEffectiveBudget(monthKey);
-  const incomeGoal = budget?.amounts?.Income || 0;
-  const spend = sumAmounts(
-    excludeInternalTransfers(getMonthFilteredTransactions())
-      .filter((transaction) => transaction.flowType === "charge")
-      .map((transaction) => Math.abs(transaction.amount))
-  );
-  const pct = incomeGoal > 0 ? Math.min((spend / incomeGoal) * 100, 100) : 0;
-  const isOver = incomeGoal > 0 && spend > incomeGoal;
-  const remaining = incomeGoal - spend;
-
-  els.incomeGoalCard.classList.remove("hidden");
-  els.incomeGoalCard.innerHTML = `
-    <div class="card-heading">
-      <div>
-        <p class="section-tag">Budget check</p>
-        <h2>${escapeHtml(formatMonthLabel(monthKey))} income vs. spending</h2>
-      </div>
-      <div class="income-goal-input-group">
-        <label for="incomeGoalInput">Expected income</label>
-        <input id="incomeGoalInput" type="number" min="0" step="0.01" class="filter-input" value="${incomeGoal || ""}" placeholder="0.00" />
-      </div>
-    </div>
-    ${
-      incomeGoal > 0
-        ? `
-          <div class="budget-progress-track">
-            <div class="budget-progress-fill ${isOver ? "over-budget" : ""}" style="width:${pct}%;"></div>
-          </div>
-          <p class="${isOver ? "budget-allocation-warning" : "muted"}">
-            ${formatMoney(spend)} spent of ${formatMoney(incomeGoal)} expected
-            ${isOver ? `· ${formatMoney(Math.abs(remaining))} over your expected income` : `· ${formatMoney(remaining)} left`}
-          </p>
-        `
-        : `<p class="muted">Set your expected income for ${escapeHtml(formatMonthLabel(monthKey))} to track overspending.</p>`
-    }
-  `;
-}
-
-function handleIncomeGoalInputChange(event) {
-  const input = event.target.closest("#incomeGoalInput");
-  if (!input) {
-    return;
-  }
-  const monthKey = state.activeMonth;
-  const value = Math.max(Number(input.value) || 0, 0);
-  let budget = state.budgets.find((item) => item.startMonth === monthKey);
-  if (!budget) {
-    const inherited = getEffectiveBudget(monthKey);
-    budget = { id: crypto.randomUUID(), startMonth: monthKey, amounts: { ...(inherited?.amounts || {}) } };
-    state.budgets.push(budget);
-    state.budgets.sort((a, b) => a.startMonth.localeCompare(b.startMonth));
-  }
-  budget.amounts.Income = value;
-  persistBudgets();
-  render();
-}
-
 function renderView() {
   const isAllData = state.activeView === "all-data";
+  const isByMonth = state.activeView === "by-month";
   const isNewEntry = state.activeView === "new-entry";
   const isBudget = state.activeView === "budget";
 
-  els.allDataPage.classList.toggle("hidden", !isAllData);
+  els.allDataSummaryPage.classList.toggle("hidden", !isAllData);
+  els.allDataPage.classList.toggle("hidden", !isByMonth);
   els.newEntryPage.classList.toggle("hidden", !isNewEntry);
   els.budgetPage.classList.toggle("hidden", !isBudget);
 
   els.allDataNavButton.classList.toggle("secondary-button", isAllData);
   els.allDataNavButton.classList.toggle("ghost-button", !isAllData);
+  els.byMonthNavButton.classList.toggle("secondary-button", isByMonth);
+  els.byMonthNavButton.classList.toggle("ghost-button", !isByMonth);
   els.newEntryButton.classList.toggle("secondary-button", isNewEntry);
   els.newEntryButton.classList.toggle("ghost-button", !isNewEntry);
   els.budgetNavButton.classList.toggle("secondary-button", isBudget);
   els.budgetNavButton.classList.toggle("ghost-button", !isBudget);
 }
 
-function renderStatements() {
-  const transactions = getMonthFilteredTransactions();
-  if (!transactions.length) {
-    els.statementSections.className = "stack-list empty-state";
-    els.statementSections.textContent =
-      "Upload credit card or debit statements to see saved summaries, balances, and parsed sections.";
-    return;
-  }
-
-  const grouped = groupBy(transactions, (tx) => getTransactionMonthKey(tx) || "unknown");
-  const monthKeys = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
-
-  els.statementSections.className = "stack-list";
-  els.statementSections.innerHTML = monthKeys
-    .map((monthKey) => {
-      const items = grouped[monthKey];
-      const externalItems = excludeInternalTransfers(items);
-      const inflow = sumAmounts(externalItems.filter((tx) => tx.flowType === "credit").map((tx) => Math.abs(tx.amount)));
-      const outflow = sumAmounts(externalItems.filter((tx) => tx.flowType === "charge").map((tx) => Math.abs(tx.amount)));
-      const savings = sumAmounts(items.filter((tx) => tx.category === "Savings").map((tx) => Math.abs(tx.amount)));
-      const statementLabels = Array.from(
-        new Set(
-          items.map((tx) => {
-            const statement = findStatementForTransaction(tx);
-            return statement ? statement.cardLabel || statement.fileName : tx.fileName;
-          })
-        )
-      );
-      const label = monthKey === "unknown" ? "Undated transactions" : formatMonthLabel(monthKey);
-      const statementCount = statementLabels.length;
-      const transactionCount = items.length;
-
-      return `
-        <article class="statement-card">
-          <h3>${escapeHtml(label)}</h3>
-          <p>${statementCount} statement${statementCount === 1 ? "" : "s"} · ${transactionCount} transaction${transactionCount === 1 ? "" : "s"}</p>
-          <div class="section-summary">
-            <span class="chip">Money in ${formatMoney(inflow)}</span>
-            <span class="chip">Money out ${formatMoney(outflow)}</span>
-            <span class="chip">Net ${formatMoney(inflow - outflow)}</span>
-            <span class="chip">Savings ${formatMoney(savings)}</span>
-            <span class="chip">${items.length} transactions</span>
-          </div>
-          <p class="muted statement-source-list">Statements: ${escapeHtml(statementLabels.join(", "))}</p>
-        </article>
-      `;
-    })
-    .join("");
-}
-
-function getScopedStatements() {
-  const isPeriodFiltered = state.viewScope === "year" ? Boolean(state.activeYear) : Boolean(state.activeMonth);
-  if (!isPeriodFiltered) {
-    return state.statements;
-  }
-  const statementIds = new Set(
-    getMonthFilteredTransactions()
-      .map((tx) => findStatementForTransaction(tx)?.id)
-      .filter(Boolean)
-  );
-  return state.statements.filter((statement) => statementIds.has(statement.id));
-}
-
 function renderManageStatements() {
-  const scopedStatements = getScopedStatements();
+  const scopedStatements = getStatementsForViewingPeriod();
   if (!state.statements.length) {
     els.manageStatementsList.className = "stack-list empty-state";
     els.manageStatementsList.textContent = "Upload credit card or debit statements to manage them here.";
@@ -1145,7 +1106,7 @@ function renderManageStatements() {
   }
   if (!scopedStatements.length) {
     els.manageStatementsList.className = "stack-list empty-state";
-    els.manageStatementsList.textContent = "No statements in this period. Switch the period above or choose \"All\" to see everything.";
+    els.manageStatementsList.textContent = `No statements end in ${getViewingPeriodLabel().toLowerCase()}.`;
     return;
   }
 
@@ -1177,6 +1138,30 @@ function renderManageStatements() {
       `;
     })
     .join("");
+}
+
+function getStatementsForViewingPeriod() {
+  if (state.viewScope === "year") {
+    if (!state.activeYear) {
+      return state.statements;
+    }
+    return state.statements.filter((statement) => getStatementEndMonthKey(statement).startsWith(state.activeYear));
+  }
+  if (!state.activeMonth) {
+    return state.statements;
+  }
+  return state.statements.filter((statement) => getStatementEndMonthKey(statement) === state.activeMonth);
+}
+
+function getStatementEndMonthKey(statement) {
+  return (statement.statementEndDate || extractEndDate(statement.statementPeriod) || "").slice(0, 7);
+}
+
+function getViewingPeriodLabel() {
+  if (state.viewScope === "year") {
+    return state.activeYear || "this period";
+  }
+  return state.activeMonth ? formatMonthLabel(state.activeMonth) : "this period";
 }
 
 function renderEditableStatementTransactions(statement) {
@@ -1405,6 +1390,11 @@ function renderCategoryChart() {
   const outflowTransactions = getMonthFilteredTransactions().filter(
     (item) => item.flowType === "charge" && item.category !== "Credit Card Payment"
   );
+  const incomingMoney = sumAmounts(
+    getMonthFilteredTransactions()
+      .filter((item) => item.flowType === "credit" && item.category !== "Credit Card Payment")
+      .map((item) => Math.abs(Number(item.amount) || 0))
+  );
   if (!outflowTransactions.length) {
     state.selectedCategory = "";
     setEmpty(els.categoryChart, "Spending categories will show here.");
@@ -1441,17 +1431,21 @@ function renderCategoryChart() {
   const slices = entries.map((entry) => {
     const value = Number(entry.value) || 0;
     const start = offset;
-    const share = safeTotal > 0 ? (value / safeTotal) * 100 : 0;
-    offset += share;
+    const spendShare = safeTotal > 0 ? (value / safeTotal) * 100 : 0;
+    const incomeShare = incomingMoney > 0 ? (value / incomingMoney) * 100 : null;
+    offset += spendShare;
     return {
       ...entry,
       value,
       start,
       end: offset,
-      share,
+      spendShare,
+      incomeShare,
     };
   });
   const selectedEntry = slices.find((entry) => entry.name === state.selectedCategory) || slices[0];
+  const incomeShareLabel = (share) =>
+    share === null ? "No incoming money recorded" : `${Math.round(share)}% of income`;
   state.categoryChartSlices = slices.map((entry) => ({
     name: entry.name,
     start: entry.start,
@@ -1469,14 +1463,14 @@ function renderCategoryChart() {
           <div class="donut category-donut ${selectedEntry ? "has-selection" : ""}" style="background: conic-gradient(${gradientParts});" aria-label="Category spending breakdown">
             <div class="donut-center">
               <strong>${formatMoney(total)}</strong>
-              <span>Total spending</span>
+              <span>${incomingMoney ? `${Math.round((total / incomingMoney) * 100)}% of incoming money spent` : "Total spending"}</span>
             </div>
           </div>
         </div>
         <div class="category-selected-summary">
           <span class="section-tag">Selected</span>
           <strong>${escapeHtml(selectedEntry.name)}</strong>
-          <span>${selectedEntry.items.length} charge${selectedEntry.items.length === 1 ? "" : "s"} · ${formatMoney(selectedEntry.value)} · ${Math.round(Number(selectedEntry.share) || 0)}%</span>
+          <span>${selectedEntry.items.length} charge${selectedEntry.items.length === 1 ? "" : "s"} · ${formatMoney(selectedEntry.value)} · ${incomeShareLabel(selectedEntry.incomeShare)}</span>
         </div>
         <div class="legend category-legend">
           ${slices
@@ -1493,7 +1487,7 @@ function renderCategoryChart() {
                   </span>
                   <span class="legend-metrics">
                     <strong>${formatMoney(entry.value)}</strong>
-                    <span class="muted">${Math.round(Number(entry.share) || 0)}%</span>
+                    <span class="muted">${incomeShareLabel(entry.incomeShare)}</span>
                   </span>
                 </button>
               `
@@ -1505,6 +1499,7 @@ function renderCategoryChart() {
         <div class="day-detail-heading">
           <h3>${escapeHtml(selectedEntry.name)} <span class="muted">· ${selectedEntry.items.length} charge${selectedEntry.items.length === 1 ? "" : "s"} · ${formatMoney(selectedEntry.value)}</span></h3>
         </div>
+        <p class="muted category-detail-note">Includes debit-account and credit-card spending · ${incomeShareLabel(selectedEntry.incomeShare)}</p>
         <div class="table-wrap category-detail-table">
           <table>
             <thead>
@@ -1532,54 +1527,6 @@ function renderCategoryChart() {
           </table>
         </div>
       </div>
-    </div>
-  `;
-}
-
-function renderCreditCardSpendChart() {
-  const creditCardCharges = state.transactions
-    .filter((tx) => tx.flowType === "charge" && findSubmittedStatementKind(tx) === "credit-card")
-    .reduce((acc, tx) => {
-      const key = getTransactionMonthKey(tx) || "unknown";
-      acc[key] = (acc[key] || 0) + Math.abs(tx.amount);
-      return acc;
-    }, {});
-
-  const entries = Object.entries(creditCardCharges)
-    .map(([monthKey, value]) => ({
-      label: monthKey === "unknown" ? "Unknown" : formatMonthLabel(monthKey),
-      value,
-      monthKey,
-    }))
-    .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
-    .filter((entry) => entry.value > 0);
-
-  if (!entries.length) {
-    setEmpty(els.creditCardSpendChart, "Credit card monthly spending will show here.");
-    return;
-  }
-
-  const max = Math.max(...entries.map((entry) => entry.value), 1);
-  els.creditCardSpendChart.className = "chart-area";
-  els.creditCardSpendChart.innerHTML = `
-    <div class="bar-chart">
-      ${entries
-        .map((entry) => {
-          const heightPx = Math.max((entry.value / max) * 220, 24);
-          const isActive = state.activeMonth && entry.monthKey === state.activeMonth;
-          const gradient = isActive
-            ? "linear-gradient(180deg, #4f5fe0, #8a3fa0)"
-            : "linear-gradient(180deg, #6f84f7, #b457b8)";
-          const opacity = state.activeMonth && !isActive ? "0.4" : "1";
-          return `
-            <div class="bar-item" style="opacity:${opacity};">
-              <div class="bar-value">${formatMoney(entry.value)}</div>
-              <div class="bar-visual" style="height:${heightPx}px; background:${gradient}; border-radius:${barRadius(heightPx)};"></div>
-              <div class="bar-label">${escapeHtml(entry.label)}</div>
-            </div>
-          `;
-        })
-        .join("")}
     </div>
   `;
 }
@@ -2520,14 +2467,16 @@ async function submitDraftEntry() {
   const byFile = new Map(merged.map((statement) => [buildStatementKey(statement), statement]));
   state.statements = Array.from(byFile.values()).sort(sortByPeriod);
   state.transactions = state.statements.flatMap((statement) => statement.transactions || []);
-  persistStatements();
+  const savedToDatabase = await persistStatements();
 
   const archiveSummary = await archiveUploadedFiles(state.draftFiles);
   const submittedCount = state.draftStatements.length;
   clearDraftState();
   switchView("all-data");
   setStatus(
-    `Submitted ${submittedCount} draft statement${submittedCount === 1 ? "" : "s"} into your totals. ${archiveSummary}`
+    savedToDatabase
+      ? `Submitted ${submittedCount} draft statement${submittedCount === 1 ? "" : "s"} into your totals. ${archiveSummary}`
+      : `Added ${submittedCount} statement${submittedCount === 1 ? "" : "s"} to the browser backup, but SQLite could not be updated. ${archiveSummary}`
   );
   render();
 }
@@ -2870,33 +2819,6 @@ function getAvailableYears() {
     state.transactions.map((transaction) => (getTransactionMonthKey(transaction) || "").slice(0, 4)).filter(Boolean)
   );
   return Array.from(years).sort((a, b) => b.localeCompare(a));
-}
-
-function renderMonthSelector() {
-  els.periodScopeToggle.querySelectorAll("[data-scope]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.scope === state.viewScope);
-  });
-
-  if (state.viewScope === "year") {
-    const years = Array.from(new Set([...getAvailableYears(), state.activeYear].filter(Boolean))).sort((a, b) =>
-      b.localeCompare(a)
-    );
-    els.periodSelector.innerHTML =
-      `<option value="">All years</option>` +
-      years.map((year) => `<option value="${year}">${escapeHtml(year)}</option>`).join("");
-    els.periodSelector.value = state.activeYear;
-    return;
-  }
-
-  const months = Array.from(new Set([...getAvailableMonths(), state.activeMonth].filter(Boolean))).sort((a, b) =>
-    b.localeCompare(a)
-  );
-  els.periodSelector.innerHTML =
-    `<option value="">All months</option>` +
-    months
-      .map((monthKey) => `<option value="${monthKey}">${escapeHtml(formatMonthLabel(monthKey))}</option>`)
-      .join("");
-  els.periodSelector.value = state.activeMonth;
 }
 
 function populateBudgetCategoryInputs() {
@@ -3449,19 +3371,23 @@ function queueDatabaseSave() {
       try {
         await saveDatabaseSnapshotNow(snapshot);
         databaseAvailable = true;
+        return true;
       } catch (error) {
         console.error(error);
         databaseAvailable = false;
         setStatus("A browser backup was saved, but SQLite could not be updated. Keep this tab open and restart the local server.");
         showToast("SQLite save failed — browser backup retained", "error");
+        return false;
       }
     });
+  return databaseSaveChain;
 }
 
 function persistStatements(toastMessage = "Saved to SQLite") {
   cacheSnapshotInBrowser();
-  queueDatabaseSave();
+  const savePromise = queueDatabaseSave();
   showToast(databaseAvailable ? toastMessage.replace("this browser", "SQLite") : "Saved browser backup; connecting to SQLite…");
+  return savePromise;
 }
 
 function hydrateBudgetsFromStorage() {
@@ -3549,12 +3475,14 @@ function clearDraftState() {
 }
 
 function focusEntryPanel() {
-  switchView("new-entry");
+  state.activeView = "new-entry";
+  renderView();
   els.entryPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function chooseStatementKind(kind) {
   state.pendingStatementKind = kind;
+  renderEntryFlow();
   render();
 }
 
@@ -3565,6 +3493,7 @@ function changeStatementKind() {
   state.draftFiles = [];
   state.selectedTransactionIds = [];
   els.fileInput.value = "";
+  renderEntryFlow();
   render();
 }
 
@@ -3820,17 +3749,6 @@ function findStatementAccountNumber(transaction) {
 
 function findStatementKind(transaction) {
   return findStatementForTransaction(transaction)?.statementKind || "";
-}
-
-function findSubmittedStatementKind(transaction) {
-  return (
-    state.statements.find(
-      (statement) =>
-        statement.fileName === transaction.fileName &&
-        statement.statementPeriod === transaction.statementPeriod &&
-        statement.transactions.some((item) => item.id === transaction.id)
-    )?.statementKind || ""
-  );
 }
 
 function shortDateLabel(label) {

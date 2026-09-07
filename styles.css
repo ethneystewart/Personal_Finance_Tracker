@@ -687,6 +687,163 @@ button {
   align-items: start;
 }
 
+.month-history {
+  display: grid;
+  gap: 0.6rem;
+  max-height: 480px;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+
+.month-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.month-history-row h3,
+.month-history-row p {
+  margin: 0;
+}
+
+.month-history-row h3 {
+  font-size: 1rem;
+}
+
+.month-history-row p,
+.month-history-amount {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.month-history-amount {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.month-history-amount strong {
+  margin-left: 0.2rem;
+}
+
+.stacked-spending-chart {
+  display: grid;
+  gap: 1rem;
+  width: 100%;
+}
+
+.stacked-spending-bars {
+  display: flex;
+  align-items: end;
+  gap: 0.8rem;
+  min-height: 300px;
+  overflow-x: auto;
+  padding: 1.4rem 0.2rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.stacked-spending-bar-item {
+  flex: 0 0 112px;
+  display: grid;
+  justify-items: center;
+  gap: 0.5rem;
+}
+
+.stacked-spending-value,
+.stacked-spending-label {
+  font-size: 0.78rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.stacked-spending-value {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.stacked-spending-label {
+  color: var(--muted);
+}
+
+.stacked-spending-bar {
+  display: flex;
+  width: 58px;
+  flex-direction: column-reverse;
+  border-radius: 14px 14px 7px 7px;
+  background: rgba(117, 71, 139, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(117, 71, 139, 0.08);
+}
+
+.stacked-spending-bar:hover {
+  filter: brightness(1.08);
+}
+
+.spending-segment {
+  display: block;
+  min-height: 1px;
+  pointer-events: none;
+}
+
+.spending-segment-top {
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+}
+
+.spending-segment-bottom {
+  border-bottom-left-radius: 7px;
+  border-bottom-right-radius: 7px;
+}
+
+/* Appended to <body> and positioned with `position: fixed` in JS so it can
+   escape the chart's horizontally-scrolling container without being clipped. */
+.chart-floating-tooltip {
+  position: fixed;
+  transform: translate(-50%, -100%);
+  background: var(--ink);
+  color: #fff;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-line;
+  text-align: left;
+  max-width: 240px;
+  box-shadow: 0 12px 24px rgba(43, 28, 63, 0.28);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.chart-floating-tooltip.hidden {
+  display: none;
+}
+
+.stacked-spending-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.85rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.stacked-spending-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.stacked-spending-legend i {
+  display: inline-block;
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 50%;
+}
+
 .section-card,
 .chart-card {
   border-radius: 20px;
@@ -1230,9 +1387,11 @@ button {
 
 .category-breakdown-layout {
   display: grid;
-  grid-template-columns: minmax(240px, 290px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
   gap: 0.85rem;
   align-items: start;
+  height: auto;
+  min-height: 0;
 }
 
 .category-breakdown-card {
@@ -1240,12 +1399,22 @@ button {
 }
 
 .category-legend {
-  max-height: 210px;
+  min-height: 0;
+  max-height: 360px;
+}
+
+.category-breakdown-layout .donut-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .category-detail-card {
-  display: grid;
-  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  height: auto;
+  min-height: 0;
   padding: 0.9rem 1rem;
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 247, 252, 0.92));
@@ -1255,8 +1424,14 @@ button {
 
 .category-detail-table {
   min-height: 0;
-  max-height: 300px;
+  height: auto;
+  max-height: 460px;
   overflow-y: auto;
+}
+
+.category-detail-note {
+  margin: 0.1rem 0 0.7rem;
+  font-size: 0.82rem;
 }
 
 .category-selected-summary {
@@ -1479,11 +1654,27 @@ tbody td {
 
   .category-breakdown-layout {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
+  }
+
+  .category-detail-card {
+    height: auto;
+    min-height: 0;
   }
 
   .category-detail-table,
   .category-legend {
-    max-height: none;
+    max-height: 420px;
+  }
+
+  .month-history-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .month-history-amount {
+    justify-content: flex-start;
   }
 }
 

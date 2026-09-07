@@ -22,6 +22,9 @@
             <button id="allDataNavButton" class="ghost-button hero-nav-button" type="button">
               All Data
             </button>
+            <button id="byMonthNavButton" class="ghost-button hero-nav-button" type="button">
+              By Month
+            </button>
             <button id="newEntryButton" class="secondary-button hero-nav-button" type="button">
               New Entry
             </button>
@@ -66,7 +69,7 @@
           </div>
 
           <label class="dropzone hidden" id="dropzone" for="fileInput">
-            <input id="fileInput" type="file" accept="application/pdf" multiple />
+            <input id="fileInput" type="file" accept=".pdf,application/pdf" multiple />
             <span class="dropzone-icon">+</span>
             <span class="dropzone-title">Choose PDFs or drag them here</span>
             <span class="dropzone-subtitle">
@@ -153,7 +156,60 @@
 
         </section>
 
-        <section id="allDataPage" class="page-section">
+        <section id="allDataSummaryPage" class="page-section hidden">
+          <div class="month-selector-row">
+            <label for="allDataYearSelector">Year</label>
+            <select id="allDataYearSelector" class="category-select" aria-label="Filter all data by year"></select>
+          </div>
+          <section class="overview-grid">
+            <article class="metric-card glass-card">
+              <p>Statements in view</p>
+              <h3 id="allDataStatementCount">0</h3>
+            </article>
+            <article class="metric-card glass-card">
+              <p>Money in</p>
+              <h3 id="allDataIncomeTotal">$0.00</h3>
+            </article>
+            <article class="metric-card glass-card">
+              <p>Money out</p>
+              <h3 id="allDataSpendingTotal">$0.00</h3>
+            </article>
+            <article class="metric-card glass-card">
+              <p>Net change</p>
+              <h3 id="allDataNetTotal">$0.00</h3>
+            </article>
+          </section>
+
+          <section class="content-grid">
+            <article class="glass-card chart-card full-width">
+              <div class="card-heading">
+                <div>
+                  <p class="section-tag">Spending overview</p>
+                  <h2>Monthly spending by category</h2>
+                  <p class="muted details-note">Each bar is a month. Its height is total spending and each colour is a spending category.</p>
+                </div>
+              </div>
+              <div id="allDataSpendingChart" class="chart-area empty-state">
+                Category spending will show here.
+              </div>
+            </article>
+
+            <article class="glass-card section-card full-width">
+              <div class="card-heading">
+                <div>
+                  <p class="section-tag">History</p>
+                  <h2>Month-by-month summary</h2>
+                  <p class="muted details-note">Income, spending, and net change for the selected year.</p>
+                </div>
+              </div>
+              <div id="allDataMonthHistory" class="month-history empty-state">
+                Add statements to see your month-by-month history.
+              </div>
+            </article>
+          </section>
+        </section>
+
+        <section id="allDataPage" class="page-section hidden">
         <div class="month-selector-row">
           <label>Viewing</label>
           <div class="granularity-toggle" id="periodScopeToggle">
@@ -184,19 +240,6 @@
         <article class="glass-card section-card full-width hidden" id="incomeGoalCard"></article>
 
         <section class="content-grid">
-          <article class="glass-card section-card">
-            <div class="card-heading">
-              <div>
-                <p class="section-tag">Sections</p>
-                <h2>Month breakdown</h2>
-              </div>
-            </div>
-            <div id="statementSections" class="stack-list empty-state">
-              Upload credit card or debit statements to see saved summaries,
-              balances, and parsed sections.
-            </div>
-          </article>
-
           <article class="glass-card section-card full-width">
             <div class="card-heading">
               <div>
@@ -236,22 +279,10 @@
             </div>
           </article>
 
-          <article class="glass-card chart-card">
-            <div class="card-heading">
-              <div>
-                <p class="section-tag">Visual 2</p>
-                <h2>Monthly Credit Card Spend</h2>
-              </div>
-            </div>
-            <div id="creditCardSpendChart" class="chart-area empty-state">
-              Credit card monthly spending will show here.
-            </div>
-          </article>
-
           <article class="glass-card chart-card full-width category-breakdown-card">
             <div class="card-heading">
               <div>
-                <p class="section-tag">Visual 3</p>
+                <p class="section-tag">Visual 2</p>
                 <h2>Category breakdown</h2>
               </div>
             </div>
@@ -263,7 +294,7 @@
           <article class="glass-card chart-card full-width">
             <div class="card-heading">
               <div>
-                <p class="section-tag">Visual 4</p>
+                <p class="section-tag">Visual 3</p>
                 <h2>Spending timeline</h2>
               </div>
             </div>
