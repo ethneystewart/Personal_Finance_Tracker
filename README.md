@@ -2,6 +2,30 @@
 
 Purely vibe coded personal finance tracker. Honestly just didnt want to have to pay a website to do this for me. 
 
+![Finance Tracker dashboard showing summary totals, monthly spending by category, and month-by-month history](docs/images/dashboard.png)
+
+*Dashboard shown with built-in demo data.*
+
+## Requirements
+
+- Python 3 with SQLite support (tested with Python 3.14).
+- A modern browser with JavaScript enabled.
+- Write access to the project directory so the server can save data under `storage/`.
+
+No `pip install` or `npm install` is needed. The server uses only Python's standard library, including `sqlite3`, and the PDF.js files are bundled in `vendor/pdfjs/`, so there is no `requirements.txt`. Internet access is only needed to load the Google Fonts; the app uses fallback fonts when offline.
+
+## Run it
+
+From the project directory:
+
+```bash
+python3 server.py
+```
+
+Then open `http://localhost:8000`.
+
+
+
 ## What it does
 
 - Upload one or more credit card or debit statement PDFs
@@ -24,15 +48,6 @@ Purely vibe coded personal finance tracker. Honestly just didnt want to have to 
   - category donut
   - balance trend line
   - spending timeline
-
-## Run it
-
-```bash
-python3 server.py
-```
-
-Then open `http://localhost:8000`.
-
 
 ## Notes
 
