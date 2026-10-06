@@ -65,6 +65,7 @@ const els = {
   demoButton: document.querySelector("#demoButton"),
   exportDataButton: document.querySelector("#exportDataButton"),
   clearButton: document.querySelector("#clearButton"),
+  refreshCategoriesButton: document.querySelector("#refreshCategoriesButton"),
   allDataNavButton: document.querySelector("#allDataNavButton"),
   byMonthNavButton: document.querySelector("#byMonthNavButton"),
   newEntryButton: document.querySelector("#newEntryButton"),
@@ -221,6 +222,7 @@ async function init() {
   els.demoButton.addEventListener("click", loadDemoData);
   els.exportDataButton.addEventListener("click", exportDataBackup);
   els.clearButton.addEventListener("click", clearDashboard);
+  els.refreshCategoriesButton.addEventListener("click", refreshCategories);
   els.statementTypeCreditButton.addEventListener("click", () => chooseStatementKind("credit-card"));
   els.statementTypeDebitButton.addEventListener("click", () => chooseStatementKind("bank-account"));
   els.changeStatementTypeButton.addEventListener("click", changeStatementKind);
@@ -2322,7 +2324,50 @@ function deleteTransactions(transactionIds) {
   render();
 }
 
+function refreshCategories() {
+  const statements = [...state.statements, ...state.draftStatements];
+  const count = statements.reduce((total, statement) => total + (statement.transactions || []).length, 0);
+  if (!count) {
+    setStatus("Add transactions before refreshing categories.");
+    return;
+  }
+  if (!window.confirm(
+    `Reset categories for all ${count} transactions, including any uploads awaiting review? Automatic categorization will replace your manual labels. Dates, amounts, and money flow will stay the same.`
+  )) {
+    return;
+  }
+
+  let changed = 0;
+  statements.forEach((statement) => {
+    (statement.transactions || []).forEach((transaction) => {
+      const amount = transaction.flowType === "charge"
+        ? -Math.abs(transaction.amount)
+        : Math.abs(transaction.amount);
+      const category = categorizeTransaction(transaction.description, amount, statement.statementKind);
+      if (transaction.category !== category) {
+        transaction.category = category;
+        changed += 1;
+      }
+    });
+    recalculateStatementTotals(statement);
+  });
+  state.transactions = state.statements.flatMap((statement) => statement.transactions || []);
+  state.draftTransactions = state.draftStatements.flatMap((statement) => statement.transactions || []);
+  state.selectedCategory = "";
+  if (state.statements.length) {
+    persistStatements("Categories refreshed");
+  }
+  setStatus(`Refreshed categories for ${count} transactions; ${changed} label${changed === 1 ? "" : "s"} changed.`);
+  render();
+}
+
 function clearDashboard() {
+  if (window.prompt(
+    "Delete all saved statements and transactions, including uploads awaiting review? Budgets and archived PDFs will be kept. Type DELETE to confirm."
+  ) !== "DELETE") {
+    return;
+  }
+
   state.statements = [];
   state.transactions = [];
   state.draftStatements = [];
