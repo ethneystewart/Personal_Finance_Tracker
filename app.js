@@ -153,7 +153,8 @@ const categoryRules = [
 
 const debitOnlyCategoryRules = [
   { name: "Credit Card Payment", keywords: ["mastercard", "visa preauth", "visa payment", "amex", "credit card payment", "cc payment", "mc preauth", "card payment"] },
-  { name: "Savings", keywords: ["savings transfer", "to savings", "from savings", "tfsa", "rrsp", "investment transfer"] },
+  { name: "Savings withdrawal", keywords: ["from savings", "savings withdrawal", "savings to chequing", "savings to checking"] },
+  { name: "Savings", keywords: ["savings transfer", "to savings", "tfsa", "rrsp", "investment transfer"] },
 ];
 
 const categoryColorMap = {
@@ -170,6 +171,7 @@ const categoryColorMap = {
   Income: { solid: "#2d8a63", soft: "rgba(45, 138, 99, 0.14)", border: "rgba(45, 138, 99, 0.28)" },
   "Credit Card Payment": { solid: "#6c5ce7", soft: "rgba(108, 92, 231, 0.14)", border: "rgba(108, 92, 231, 0.3)" },
   Savings: { solid: "#3fc1c9", soft: "rgba(63, 193, 201, 0.16)", border: "rgba(63, 193, 201, 0.3)" },
+  "Savings withdrawal": { solid: "#438da8", soft: "rgba(67, 141, 168, 0.16)", border: "rgba(67, 141, 168, 0.3)" },
 };
 const categoryOptions = [
   "Shopping - Clothes & Beauty",
@@ -183,10 +185,11 @@ const categoryOptions = [
   "Travel",
   "Income",
   "Savings",
+  "Savings withdrawal",
   "Rent & Utilities",
   "Undecided",
 ];
-const budgetExcludedCategories = ["Income", "Credit Card Payment"];
+const budgetExcludedCategories = ["Income", "Credit Card Payment", "Savings withdrawal"];
 const budgetableCategories = categoryOptions.filter(
   (category) => !budgetExcludedCategories.includes(category)
 );
@@ -917,6 +920,9 @@ function categorizeTransaction(description, amount, statementKind) {
   if (statementKind !== "credit-card") {
     for (const rule of debitOnlyCategoryRules) {
       if (rule.keywords.some((keyword) => lower.includes(keyword))) {
+        if (rule.name === "Savings" && amount > 0) {
+          return "Savings withdrawal";
+        }
         return rule.name;
       }
     }
@@ -1389,12 +1395,13 @@ function renderFlowChart() {
 }
 
 function renderCategoryChart() {
-  const outflowTransactions = getMonthFilteredTransactions().filter(
-    (item) => item.flowType === "charge" && item.category !== "Credit Card Payment"
+  const transactions = excludeInternalTransfers(getMonthFilteredTransactions());
+  const outflowTransactions = transactions.filter(
+    (item) => item.flowType === "charge"
   );
   const incomingMoney = sumAmounts(
-    getMonthFilteredTransactions()
-      .filter((item) => item.flowType === "credit" && item.category !== "Credit Card Payment")
+    transactions
+      .filter((item) => item.flowType === "credit")
       .map((item) => Math.abs(Number(item.amount) || 0))
   );
   if (!outflowTransactions.length) {
@@ -1534,8 +1541,8 @@ function renderCategoryChart() {
 }
 
 function getTimelineBaseTransactions() {
-  return getMonthFilteredTransactions().filter(
-    (tx) => tx.flowType === "charge" && tx.category !== "Credit Card Payment"
+  return excludeInternalTransfers(getMonthFilteredTransactions()).filter(
+    (tx) => tx.flowType === "charge"
   );
 }
 
@@ -2856,7 +2863,9 @@ function getMonthFilteredTransactions() {
 }
 
 function excludeInternalTransfers(transactions) {
-  return transactions.filter((transaction) => transaction.category !== "Credit Card Payment");
+  return transactions.filter((transaction) =>
+    !["Credit Card Payment", "Savings withdrawal"].includes(transaction.category)
+  );
 }
 
 function getAvailableYears() {
